@@ -8,11 +8,13 @@ from config.constants import (
     SELECTING_ENVIRONMENT,
     SELECTING_SERVICE,
     INPUTTING_HASH,
+    INPUTTING_BRANCH,
     INPUTTING_CONTENT,
     CONFIRMING_FORM,
     ACTION_SELECT_PROJECT,
     ACTION_SELECT_ENV,
     ACTION_SELECT_SERVICE,
+    ACTION_SERVICE_PAGE,
     ACTION_CONFIRM_SERVICE_SELECTION,
     ACTION_CONFIRM_FORM,
     ACTION_CANCEL_FORM,
@@ -38,6 +40,7 @@ class FormHandler:
                 'environment': None,
                 'services': [],
                 'hash': None,
+                'branch': 'uat-ebpay',  # 默认分支
                 'content': None,
             }
         return context.user_data['form_data']
@@ -46,10 +49,12 @@ class FormHandler:
     def _format_submission_data(form_data: dict) -> str:
         """格式化提交数据"""
         services_text = ", ".join(form_data.get('services', []))
+        branch_text = form_data.get('branch', 'uat-ebpay')
         return (
             f"申请时间: {form_data['apply_time']}\n"
             f"申请项目: {form_data['project']}\n"
             f"申请环境: {form_data['environment']}\n"
+            f"申请发版分支: {branch_text}\n"
             f"申请部署服务: {services_text}\n"
             f"申请发版hash: {form_data['hash']}\n"
             f"申请发版服务内容: {form_data['content']}"
@@ -195,12 +200,16 @@ class FormHandler:
         
         logger.info(f"用户 {query.from_user.id} 选择环境: {environment}")
         
-        # 显示服务选择
-        return await FormHandler.show_service_selection(update, context)
+        # 清空之前选择的服务（切换环境时重置）
+        if 'form_data' in context.user_data:
+            context.user_data['form_data']['services'] = []
+        
+        # 显示分支输入（在服务选择之前）
+        return await FormHandler.show_branch_input(update, context)
     
     @staticmethod
     async def show_service_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """显示服务选择"""
+        """显示服务选择（紧凑布局，每行3个按钮）"""
         form_data = context.user_data.get('form_data', {})
         project = form_data.get('project')
         environment = form_data.get('environment')
@@ -225,14 +234,28 @@ class FormHandler:
             logger.error(f"项目 {project} 在 {environment} 环境下服务列表未配置")
             return ConversationHandler.END
         
-        # 获取已选择的服务
+        # 获取已选择的服务（确保是列表类型，并清空无效数据）
         selected_services = context.user_data['form_data'].get('services', [])
+        if not isinstance(selected_services, list):
+            selected_services = []
+            context.user_data['form_data']['services'] = []
         
-        # 优化：每行只显示1个按钮，确保长服务名称可以完整显示
+        # 确保已选择的服务都在当前服务列表中（过滤掉无效的服务）
+        selected_services = [s for s in selected_services if s in services]
+        context.user_data['form_data']['services'] = selected_services
+        
+        # 构建按钮键盘（每行显示1个按钮，显示完整服务名称）
         keyboard = []
         for service in services:
             # 如果已选择，显示 ✓ 标记
-            btn_text = f"✓ {service}" if service in selected_services else service
+            is_selected = service in selected_services
+            
+            # 按钮文本：✓ 服务名 或 服务名
+            if is_selected:
+                btn_text = f"✓ {service}"
+            else:
+                btn_text = service
+            
             keyboard.append([
                 InlineKeyboardButton(
                     btn_text,
@@ -247,16 +270,20 @@ class FormHandler:
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        form_data = context.user_data['form_data']
+        # 构建消息文本
         selected_text = ", ".join(selected_services) if selected_services else "未选择"
+        branch_text = form_data.get('branch', 'uat-ebpay')
+        
         message = "📋 申请测试环境服务发版\n\n" \
                  f"✅ 申请时间: {form_data['apply_time']}\n" \
                  f"✅ 申请项目: {form_data['project']}\n" \
                  f"✅ 申请环境: {form_data['environment']}\n" \
+                 f"✅ 申请发版分支: {branch_text}\n" \
                  f"⏳ 申请部署服务: {selected_text}\n\n" \
                  f"💡 可多选，再次点击可取消选择"
         
-        await update.callback_query.edit_message_text(message, reply_markup=reply_markup)
+        # 使用 reply_or_edit 以支持 callback_query 和 message 两种情况
+        await reply_or_edit(update, message, reply_markup=reply_markup)
         
         return SELECTING_SERVICE
     
@@ -276,10 +303,12 @@ class FormHandler:
             # 完成选择，进入输入hash步骤
             form_data = context.user_data['form_data']
             services_text = ", ".join(selected_services)
+            branch_text = form_data.get('branch', 'uat-ebpay')
             message = "📋 申请测试环境服务发版\n\n" \
                      f"✅ 申请时间: {form_data['apply_time']}\n" \
                      f"✅ 申请项目: {form_data['project']}\n" \
                      f"✅ 申请环境: {form_data['environment']}\n" \
+                     f"✅ 申请发版分支: {branch_text}\n" \
                      f"✅ 申请部署服务: {services_text}\n" \
                      f"⏳ 申请发版hash: 请输入\n\n" \
                      f"💡 支持多个hash，用逗号分隔（例如：hash1,hash2,hash3）"
@@ -334,9 +363,11 @@ class FormHandler:
                 await update.message.reply_text("❌ hash不能为空，请重新输入")
                 return INPUTTING_HASH
             
-            # 支持多个hash，用逗号分隔
+            # 支持多个hash，用逗号分隔（支持中文和英文逗号）
+            # 先统一替换中文逗号和顿号为英文逗号
+            hash_value_normalized = hash_value.replace('，', ',').replace('、', ',')
             # 清理空格并验证
-            hash_list = [h.strip() for h in hash_value.split(',') if h.strip()]
+            hash_list = [h.strip() for h in hash_value_normalized.split(',') if h.strip()]
             if not hash_list:
                 await update.message.reply_text("❌ hash格式错误，请使用逗号分隔多个hash（例如：hash1,hash2）")
                 return INPUTTING_HASH
@@ -349,7 +380,7 @@ class FormHandler:
             context.user_data['form_data']['hash'] = hash_value
             logger.info(f"hash已保存: {hash_value}, 完整表单数据: {context.user_data['form_data']}")
             
-            # 显示输入发版内容界面
+            # 显示输入发版内容界面（hash 输入后直接到内容输入）
             logger.info("准备显示输入发版内容界面")
             result = await FormHandler.show_content_input(update, context)
             logger.info(f"输入发版内容界面已显示，返回状态: {result}")
@@ -361,16 +392,113 @@ class FormHandler:
             return INPUTTING_HASH
     
     @staticmethod
+    async def show_branch_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """显示输入分支界面"""
+        try:
+            form_data = context.user_data.get('form_data', {})
+            branch_text = form_data.get('branch', 'uat-ebpay')
+            
+            # 创建键盘，提供默认选项和自定义输入
+            keyboard = [
+                [
+                    InlineKeyboardButton("✅ 使用默认: uat-ebpay", callback_data="branch:default")
+                ],
+                [
+                    InlineKeyboardButton("✏️ 自定义输入", callback_data="branch:custom")
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            message = "📋 申请测试环境服务发版\n\n" \
+                     f"✅ 申请时间: {form_data.get('apply_time', 'N/A')}\n" \
+                     f"✅ 申请项目: {form_data.get('project', 'N/A')}\n" \
+                     f"✅ 申请环境: {form_data.get('environment', 'N/A')}\n" \
+                     f"⏳ 申请发版分支: {branch_text}\n\n" \
+                     f"💡 选择默认分支或点击自定义输入"
+            
+            await reply_or_edit(update, message, reply_markup=reply_markup)
+            
+            logger.info("输入分支界面已显示")
+            return INPUTTING_BRANCH
+        except Exception as e:
+            logger.error(f"显示输入分支界面时发生错误: {str(e)}", exc_info=True)
+            await reply_or_edit(update, f"❌ 显示输入界面失败: {str(e)}")
+            return ConversationHandler.END
+    
+    @staticmethod
+    async def handle_branch_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理分支输入"""
+        try:
+            # 检查是否是回调查询（选择默认分支）
+            if update.callback_query:
+                query = update.callback_query
+                await query.answer()
+                
+                if query.data == "branch:default":
+                    # 使用默认分支
+                    FormHandler._init_form_data(context)
+                    context.user_data['form_data']['branch'] = 'uat-ebpay'
+                    logger.info(f"用户 {query.from_user.id} 选择默认分支: uat-ebpay")
+                    
+                    # 显示服务选择界面
+                    return await FormHandler.show_service_selection(update, context)
+                elif query.data == "branch:custom":
+                    # 提示用户输入自定义分支
+                    form_data = context.user_data.get('form_data', {})
+                    message = "📋 申请测试环境服务发版\n\n" \
+                             f"✅ 申请时间: {form_data.get('apply_time', 'N/A')}\n" \
+                             f"✅ 申请项目: {form_data.get('project', 'N/A')}\n" \
+                             f"✅ 申请环境: {form_data.get('environment', 'N/A')}\n" \
+                             f"⏳ 申请发版分支: 请输入\n\n" \
+                             f"💡 请在下方输入框中直接输入分支名称，然后发送"
+                    
+                    await query.edit_message_text(message)
+                    return INPUTTING_BRANCH
+                else:
+                    return INPUTTING_BRANCH
+            
+            # 处理文本输入（自定义分支）
+            if not update.message or not update.message.text:
+                logger.error("消息格式错误，没有文本内容")
+                await update.message.reply_text("❌ 请输入有效的分支名称（文本格式）")
+                return INPUTTING_BRANCH
+            
+            branch_value = update.message.text.strip()
+            logger.info(f"用户 {update.message.from_user.id} 输入分支: {branch_value}")
+            
+            if not branch_value:
+                await update.message.reply_text("❌ 分支名称不能为空，请重新输入")
+                return INPUTTING_BRANCH
+            
+            # 确保表单数据已初始化
+            FormHandler._init_form_data(context)
+            context.user_data['form_data']['branch'] = branch_value
+            logger.info(f"分支已保存: {branch_value}, 完整表单数据: {context.user_data['form_data']}")
+            
+            # 显示服务选择界面
+            logger.info("准备显示服务选择界面")
+            result = await FormHandler.show_service_selection(update, context)
+            logger.info(f"服务选择界面已显示，返回状态: {result}")
+            return result
+        except Exception as e:
+            logger.error(f"处理分支输入时发生错误: {str(e)}", exc_info=True)
+            if update.message:
+                await update.message.reply_text(f"❌ 处理输入失败: {str(e)}")
+            return INPUTTING_BRANCH
+    
+    @staticmethod
     async def show_content_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """显示输入发版内容界面"""
         try:
             form_data = context.user_data.get('form_data', {})
             services_text = ", ".join(form_data.get('services', [])) if form_data.get('services') else "未选择"
             hash_text = form_data.get('hash', 'N/A')
+            branch_text = form_data.get('branch', 'uat-ebpay')
             message = "📋 申请测试环境服务发版\n\n" \
                      f"✅ 申请时间: {form_data.get('apply_time', 'N/A')}\n" \
                      f"✅ 申请项目: {form_data.get('project', 'N/A')}\n" \
                      f"✅ 申请环境: {form_data.get('environment', 'N/A')}\n" \
+                     f"✅ 申请发版分支: {branch_text}\n" \
                      f"✅ 申请部署服务: {services_text}\n" \
                      f"✅ 申请发版hash: {hash_text}\n" \
                      f"⏳ 申请发版服务内容: 请输入\n\n" \
@@ -442,7 +570,7 @@ class FormHandler:
                 await update.message.reply_text("❌ 请至少选择一个服务")
                 return ConversationHandler.END
             
-            required_fields = ['apply_time', 'project', 'environment', 'hash', 'content']
+            required_fields = ['apply_time', 'project', 'environment', 'hash', 'branch', 'content']
             missing_fields = [field for field in required_fields if not form_data.get(field)]
             if missing_fields:
                 logger.error(f"缺少必需字段: {missing_fields}")

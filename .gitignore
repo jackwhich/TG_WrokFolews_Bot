@@ -52,3 +52,6 @@ Thumbs.db
 
 # SSO 代码目录（原始 sso-code 目录，已集成到 sso/ 模块）
 sso-code/
+
+# 初始化脚本（包含敏感信息，不应提交）
+scripts/init_db.py

@@ -45,6 +45,7 @@ class SSODataConverter:
             'environment': None,
             'services': [],
             'hashes': [],
+            'branch': 'uat-ebpay',  # 默认分支
             'content': None
         }
         
@@ -55,6 +56,7 @@ class SSODataConverter:
             'environment': r'申请环境[：:]\s*([^\n]+)',
             'services': r'申请部署服务[：:]\s*([^\n]+)',
             'hash': r'申请发版hash[：:]\s*([^\n]+)',
+            'branch': r'申请发版分支[：:]\s*([^\n]+)',
             'content': r'申请发版服务内容[：:]\s*(.+?)(?=\n|$)',
         }
         
@@ -64,11 +66,18 @@ class SSODataConverter:
                 value = match.group(1).strip()
                 
                 if key == 'services':
-                    # 服务可能是逗号分隔的列表
-                    result['services'] = [s.strip() for s in value.split(',') if s.strip()]
+                    # 服务可能是逗号分隔的列表（支持中文和英文逗号）
+                    # 先统一替换中文逗号和顿号为英文逗号
+                    value_normalized = value.replace('，', ',').replace('、', ',')
+                    result['services'] = [s.strip() for s in value_normalized.split(',') if s.strip()]
                 elif key == 'hash':
-                    # Hash 可能是逗号分隔或换行分隔
-                    result['hashes'] = [h.strip() for h in re.split(r'[,\n]', value) if h.strip()]
+                    # Hash 可能是逗号分隔或换行分隔（支持中文和英文逗号）
+                    # 先统一替换中文逗号和顿号为英文逗号
+                    value_normalized = value.replace('，', ',').replace('、', ',')
+                    result['hashes'] = [h.strip() for h in re.split(r'[,\n]', value_normalized) if h.strip()]
+                elif key == 'branch':
+                    # 分支是单个值
+                    result['branch'] = value.strip() if value.strip() else 'uat-ebpay'
                 else:
                     result[key] = value
         

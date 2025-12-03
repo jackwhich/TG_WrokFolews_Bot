@@ -27,6 +27,7 @@ from config.constants import (
     SELECTING_ENVIRONMENT,
     SELECTING_SERVICE,
     INPUTTING_HASH,
+    INPUTTING_BRANCH,
     INPUTTING_CONTENT,
     CONFIRMING_FORM,
     ACTION_SELECT_PROJECT,
@@ -85,10 +86,17 @@ def setup_handlers(application):
                 CallbackQueryHandler(FormHandler.handle_environment_selection, pattern=f"^{ACTION_SELECT_ENV}:")
             ],
             SELECTING_SERVICE: [
-                CallbackQueryHandler(FormHandler.handle_service_selection, pattern=f"^{ACTION_SELECT_SERVICE}:|^{ACTION_CONFIRM_SERVICE_SELECTION}")
+                CallbackQueryHandler(
+                    FormHandler.handle_service_selection, 
+                    pattern=f"^{ACTION_SELECT_SERVICE}:|^{ACTION_CONFIRM_SERVICE_SELECTION}"
+                )
             ],
             INPUTTING_HASH: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, FormHandler.handle_hash_input)
+            ],
+            INPUTTING_BRANCH: [
+                CallbackQueryHandler(FormHandler.handle_branch_input, pattern="^branch:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, FormHandler.handle_branch_input)
             ],
             INPUTTING_CONTENT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, FormHandler.handle_content_input)

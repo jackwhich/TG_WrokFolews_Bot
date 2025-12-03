@@ -18,9 +18,10 @@ ACTION_REJECT = "reject"
     SELECTING_ENVIRONMENT,
     SELECTING_SERVICE,
     INPUTTING_HASH,
+    INPUTTING_BRANCH,
     INPUTTING_CONTENT,
     CONFIRMING_FORM,
-) = range(8)
+) = range(9)
 
 # 提交确认操作
 ACTION_CONFIRM_SUBMIT = "confirm_submit"
@@ -30,6 +31,7 @@ ACTION_CANCEL_SUBMIT = "cancel_submit"
 ACTION_SELECT_PROJECT = "select_project"
 ACTION_SELECT_ENV = "select_env"
 ACTION_SELECT_SERVICE = "select_service"
+ACTION_SERVICE_PAGE = "service_page"  # 服务分页导航
 ACTION_CONFIRM_SERVICE_SELECTION = "confirm_service_selection"
 ACTION_CONFIRM_FORM = "confirm_form"
 ACTION_CANCEL_FORM = "cancel_form"

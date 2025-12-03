@@ -89,6 +89,7 @@ class NotificationHandler:
                         chat_id=group_id,
                         text=message_text,
                         reply_markup=keyboard,
+                        parse_mode='HTML',  # 支持 HTML 格式（粗体等）
                     )
                     group_messages[group_id] = message.message_id
                     logger.info(f"✅ 工作流消息已发送到群组 {group_id}，消息ID: {message.message_id}")
@@ -156,6 +157,7 @@ class NotificationHandler:
                         chat_id=group_id,
                         message_id=msg_id,
                         text=message_text,
+                        parse_mode='HTML',  # 支持 HTML 格式（粗体等）
                     )
                     updated_count += 1
                     logger.debug(f"✅ 已更新群组 {group_id} 的消息 {msg_id}")

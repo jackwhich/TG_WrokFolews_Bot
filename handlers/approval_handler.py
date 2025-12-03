@@ -195,7 +195,7 @@ class ApprovalHandler:
                             workflow_data=updated_workflow,
                             approver_username=approver_username
                         )
-                        
+                    
                         # Jenkins 构建触发（仅在审批通过时执行）
                         await ApprovalHandler._trigger_jenkins_build(
                             context=context,
@@ -516,6 +516,7 @@ class ApprovalHandler:
             environment = tg_data.get('environment')
             services = tg_data.get('services', [])
             hashes = tg_data.get('hashes', [])
+            branch = tg_data.get('branch', 'uat-ebpay')  # 默认分支
             
             if not project_name:
                 raise ValueError("无法从提交数据中解析项目名称")
@@ -529,6 +530,7 @@ class ApprovalHandler:
             logger.info(f"   🌍 环境: {environment}")
             logger.info(f"   🚀 服务数量: {len(services)}, 服务列表: {services}")
             logger.info(f"   🔑 Hash 数量: {len(hashes)}, Hash 列表: {hashes}")
+            logger.info(f"   🌿 分支: {branch}")
             
             # 检查该项目的 Jenkins 是否启用
             logger.info(f"📋 检查项目 {project_name} 的 Jenkins 是否启用...")
@@ -584,17 +586,26 @@ class ApprovalHandler:
                     logger.warning(f"   ⚠️ 未找到对应的 Git Hash（索引: {idx}）")
                 
                 # 构建参数
+                # 注意：参数名需要与 Jenkins Job 配置的参数名一致
                 build_parameters = {
-                    'WORKFLOW_ID': workflow_id,
-                    'PROJECT': project_name,
-                    'ENVIRONMENT': environment,
-                    'SERVICE': service_name,
-                    'APPROVER': approver_username
+                    'action_type': 'gray',  # 固定值：gray
+                    'gitBranch': branch,    # 分支（从用户输入获取，默认 uat-ebpay）
                 }
                 
-                # 添加 Git Hash（如果存在）
+                # 添加 Git Hash（Jenkins 参数名：check_commitID）
                 if git_hash:
-                    build_parameters['GIT_HASH'] = git_hash
+                    build_parameters['check_commitID'] = git_hash
+                else:
+                    logger.warning(f"⚠️ 未找到 Git Hash，Jenkins 构建可能失败 - Job: {job_name}")
+                
+                logger.info(f"   🌿 分支: {branch}")
+                
+                # 可选：添加其他信息参数（如果 Jenkins Job 需要）
+                # build_parameters['WORKFLOW_ID'] = workflow_id
+                # build_parameters['PROJECT'] = project_name
+                # build_parameters['ENVIRONMENT'] = environment
+                # build_parameters['SERVICE'] = service_name
+                # build_parameters['APPROVER'] = approver_username
                 
                 # 触发构建
                 build_result = await asyncio.to_thread(

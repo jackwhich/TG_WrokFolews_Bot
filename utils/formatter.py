@@ -95,30 +95,33 @@ def format_submission_data(data: str) -> str:
         if parsed_data.get('environment'):
             formatted_lines.append(f"🌍 申请环境: {parsed_data['environment']}")
         
-        # 申请部署服务（支持多个服务）
-        services = parsed_data.get('services', [])
-        if services:
-            if len(services) == 1:
-                formatted_lines.append(f"🚀 申请部署服务: {services[0]}")
-            else:
-                services_text = "\n   ".join([f"• {s}" for s in services])
-                formatted_lines.append(f"🚀 申请部署服务:\n   {services_text}")
+        # 申请发版分支
+        branch = parsed_data.get('branch', 'uat-ebpay')
+        if branch:
+            formatted_lines.append(f"🌿 申请发版分支: {branch}")
         
         # 申请发版hash（支持多个hash，与服务对应）
+        # 注意：不再单独显示"申请部署服务"，因为hash部分已经显示了服务名称
+        services = parsed_data.get('services', [])
         hashes = parsed_data.get('hashes', [])
         if hashes:
             if len(hashes) == 1:
-                formatted_lines.append(f"🔑 申请发版hash: `{hashes[0]}`")
+                # 单个hash，如果有服务信息则显示服务名
+                if services and len(services) == 1:
+                    formatted_lines.append(f"🚀 申请部署服务: {services[0]}\n🔑 申请发版hash: <b>{hashes[0]}</b>")
+                else:
+                    formatted_lines.append(f"🔑 申请发版hash: <b>{hashes[0]}</b>")
             else:
-                # 如果 hash 数量与服务数量相同，按对应关系显示
-                if len(hashes) == len(services):
+                # 多个hash，如果与服务数量相同，按对应关系显示（包含服务名）
+                if len(hashes) == len(services) and services:
                     hash_text = "\n   ".join([
-                        f"• {services[i]}: `{hashes[i]}`"
+                        f"• {services[i]}: <b>{hashes[i]}</b>"
                         for i in range(len(services))
                     ])
-                    formatted_lines.append(f"🔑 申请发版hash:\n   {hash_text}")
+                    formatted_lines.append(f"🚀 申请部署服务及hash:\n   {hash_text}")
                 else:
-                    hash_text = "\n   ".join([f"• `{h}`" for h in hashes])
+                    # hash数量与服务数量不一致，只显示hash
+                    hash_text = "\n   ".join([f"• <b>{h}</b>" for h in hashes])
                     formatted_lines.append(f"🔑 申请发版hash:\n   {hash_text}")
         
         # 申请发版服务内容

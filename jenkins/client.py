@@ -64,11 +64,12 @@ class JenkinsClient:
         
         if parameters:
             # 使用 buildWithParameters 端点
+            # Jenkins API 要求参数通过 POST 请求体（form data）传递，而不是 URL 参数
             url = self._build_url(f"job/{encoded_job_name}/buildWithParameters")
             response = requests.post(
                 url,
                 auth=self._get_auth(),
-                params=parameters,
+                data=parameters,  # 使用 data 而不是 params，参数会作为 form data 发送
                 proxies=self.proxies,
                 timeout=30
             )
