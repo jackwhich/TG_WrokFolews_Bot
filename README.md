@@ -31,13 +31,13 @@ pip install -r requirements.txt
 **Telegram Bot 配置**：
 ```python
 DEFAULT_BOT_TOKEN = "你的 BOT_TOKEN"
-DEFAULT_APPROVER_USERNAME = "审批人用户名"  # 例如: "bob68888"
+DEFAULT_APPROVER_USERNAME = "审批人用户名"  # 例如: "xxxxx"
 ```
 
 **SSO 配置**（可选，如果需要 SSO 集成）：
 ```python
 DEFAULT_SSO_ENABLED: bool = True
-DEFAULT_SSO_URL: str = "https://c.zfit999.com"
+DEFAULT_SSO_URL: str = "https://xxxxx"
 DEFAULT_SSO_AUTH_TOKEN: str = "你的 SSO Auth Token"
 DEFAULT_SSO_AUTHORIZATION: str = "Bearer 你的 Authorization"
 ```
@@ -65,12 +65,12 @@ PROXY_PASSWORD: str = "代理密码"
 ```json
 {
   "projects": {
-    "EBPAY": {
-      "group_ids": [-5036335599],
+    "xxxx": {
+      "group_ids": [xxxxx],
       "environments": ["UAT", "GRAY-UAT"],
       "services": {
-        "UAT": ["pre-admin-export", "pre-adminmanager", "pre-eb-web-api"],
-        "GRAY-UAT": ["gray-pre-admin-export", "gray-pre-adminmanager"]
+        "UAT": ["xxxxx", "xxxx", "xxxx"],
+        "GRAY-UAT": ["xxxxx", "xxxxx"]
       }
     }
   }
