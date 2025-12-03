@@ -1,15 +1,15 @@
 {
   "projects": {
     "EBPAY": {
-      "group_ids": [-5036335599],
-      "environments": ["UAT", "GRAY-UAT"],
+      "group_ids": [xxxx],
+      "environments": ["xxxx", "xxxx"],
       "services": {
-        "UAT": ["pre-admin-export", "pre-adminmanager", "pre-eb-web-api"],
-        "GRAY-UAT": ["gray-pre-admin-export", "gray-pre-adminmanager", "gray-pre-eb-web-api"]
+        "UAT": ["xxxxx", "xxxxx", "xxxxx"],
+        "GRAY-UAT": ["xxxxx", "xxxxx", "xxxxx"]
       }
     },
     "项目B": {
-      "group_ids": [-1001234567890],
+      "group_ids": [xxxxx],
       "environments": ["dev", "test", "prod"],
       "services": {
         "dev": ["服务B1", "服务B2"],
@@ -18,7 +18,7 @@
       }
     },
     "项目C": {
-      "group_ids": [-1001234567890],
+      "group_ids": [xxxxx],
       "environments": ["dev", "test"],
       "services": {
         "dev": ["服务C1"],
