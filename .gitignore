@@ -46,8 +46,9 @@ data/
 .DS_Store
 Thumbs.db
 
-# 文档文件
+# 文档文件（排除 README.md，它需要提交到仓库）
 *.md
+!README.md
 
 # SSO 代码目录（原始 sso-code 目录，已集成到 sso/ 模块）
 sso-code/
