@@ -47,7 +47,7 @@ class Settings:
     # Telegram Bot配置
     # 在这里配置你的 BOT_TOKEN（首次启动时会自动写入数据库）
     # 在这里填入你的 BOT_TOKEN，例如: "1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
-    DEFAULT_BOT_TOKEN = "7984347044:AAGgeCj8tQSLRFCWDsJXaleBazgSpYz2mrw"
+    DEFAULT_BOT_TOKEN = "xxxxx"
     
     @classmethod
     def _get_bot_token(cls) -> str:
@@ -87,8 +87,8 @@ class Settings:
     
     # 审批人配置
     # 在这里配置审批人用户名（首次启动时会自动写入数据库）
-    # 在这里填入审批人的 Telegram 用户名，例如: "bob68888"（不带 @ 符号）
-    DEFAULT_APPROVER_USERNAME = "bob68888"  
+    # 在这里填入审批人的 Telegram 用户名，例如: "xxxxx"（不带 @ 符号）
+    DEFAULT_APPROVER_USERNAME = "xxxx"  
     
     @classmethod
     def _get_approver_user_id(cls) -> int:
@@ -135,7 +135,7 @@ class Settings:
     # SSO 配置
     # 在这里配置 SSO 系统相关参数（首次启动时会自动写入数据库）
     DEFAULT_SSO_ENABLED: bool = True
-    DEFAULT_SSO_URL: str = "https://c.zfit999.com"
+    DEFAULT_SSO_URL: str = "https://xxxxx"
     DEFAULT_SSO_AUTH_TOKEN: str = ""
     DEFAULT_SSO_AUTHORIZATION: str = ""
     
