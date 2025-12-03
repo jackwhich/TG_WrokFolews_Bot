@@ -1,6 +1,6 @@
 # Telegram Workflows 工作流机器人
 
-基于Telegram Bot的审批工作流系统，实现用户提交信息、群组展示、审批流程、数据同步以及 SSO 系统集成等功能。
+基于Telegram Bot的审批工作流系统，实现用户提交信息、群组展示、审批流程、数据同步、SSO 系统集成以及 Jenkins 构建集成等功能。
 
 ## 功能特性
 
@@ -11,8 +11,11 @@
 - ✅ 审批结果同步到外部API接口
 - ✅ **SSO 系统集成**：审批通过后自动提交到 SSO 系统进行构建部署
 - ✅ **构建状态监控**：自动监控 SSO 构建状态并发送 Telegram 通知
-- ✅ **SQLite 数据库存储**：持久化存储工作流数据、SSO 提交记录和构建状态
+- ✅ **Jenkins 集成**：审批通过后自动触发 Jenkins 构建任务
+- ✅ **Jenkins 构建监控**：自动监控 Jenkins 构建状态并发送 Telegram 通知
+- ✅ **SQLite 数据库存储**：持久化存储工作流数据、SSO 提交记录、Jenkins 构建记录和构建状态
 - ✅ **配置管理**：支持从数据库读取配置，首次启动自动初始化
+- ✅ **统一代理配置**：所有模块（Telegram Bot、SSO、API、Jenkins）使用相同的代理配置
 
 ## 安装部署
 
@@ -49,28 +52,64 @@ API_ENDPOINT: str = "/workflows/sync"
 API_TOKEN: str = "API认证Token"
 ```
 
-**代理配置**（可选）：
+**全局代理配置**（可选，用于 Telegram Bot，支持有/无用户名密码）：
 ```python
-PROXY_ENABLED: bool = True
-PROXY_HOST: str = "代理地址"
-PROXY_PORT: int = 端口号
-PROXY_USERNAME: str = "代理用户名"
-PROXY_PASSWORD: str = "代理密码"
+DEFAULT_PROXY_ENABLED: bool = True
+DEFAULT_PROXY_HOST: str = "代理地址"
+DEFAULT_PROXY_PORT: int = 8080
+DEFAULT_PROXY_USERNAME: str = "代理用户名"  # 可选，无认证代理可不配置
+DEFAULT_PROXY_PASSWORD: str = "代理密码"  # 可选，无认证代理可不配置
 ```
 
-#### 2.2 项目配置（`config/options.json`）
+**注意**：全局代理配置用于 Telegram Bot。SSO、API、Jenkins 的代理配置在 `options.json` 中按项目配置。
 
-配置项目、环境、服务和群组信息：
+#### 2.2 项目配置（`scripts/options.json`）
+
+配置项目、环境、服务、群组、Jenkins 和代理信息：
 
 ```json
 {
   "projects": {
-    "xxxx": {
-      "group_ids": [xxxxx],
+    "EBPAY": {
+      "group_ids": [-5036335599],
       "environments": ["UAT", "GRAY-UAT"],
       "services": {
-        "UAT": ["xxxxx", "xxxx", "xxxx"],
-        "GRAY-UAT": ["xxxxx", "xxxxx"]
+        "UAT": ["pre-admin-export", "pre-adminmanager", "pre-eb-web-api"],
+        "GRAY-UAT": ["gray-pre-admin-export", "gray-pre-adminmanager"]
+      },
+      "jenkins": {
+        "enabled": true,
+        "url": "https://jenkins.example.com",
+        "username": "",
+        "api_token": "your_jenkins_api_token_here"
+      },
+      "proxy": {
+        "enabled": true,
+        "host": "proxy.example.com",
+        "port": 8080,
+        "username": "",
+        "password": ""
+      }
+    },
+    "项目B": {
+      "group_ids": [-1001234567890],
+      "environments": ["dev", "test"],
+      "services": {
+        "dev": ["服务B1", "服务B2"],
+        "test": ["服务B1", "服务B2"]
+      },
+      "jenkins": {
+        "enabled": false,
+        "url": "",
+        "username": "",
+        "api_token": ""
+      },
+      "proxy": {
+        "enabled": false,
+        "host": "",
+        "port": 0,
+        "username": "",
+        "password": ""
       }
     }
   }
@@ -81,13 +120,37 @@ PROXY_PASSWORD: str = "代理密码"
 - `group_ids`: 该项目的 Telegram 群组ID列表（支持多个群组）
 - `environments`: 该项目支持的环境列表
 - `services`: 一个对象，key 是环境名称，value 是该环境对应的服务列表
+- `jenkins`: Jenkins 配置（按项目区分）
+  - `enabled`: 是否启用该项目的 Jenkins 集成
+  - `url`: Jenkins 服务器地址
+  - `username`: Jenkins 用户名（可选，如果使用 Token 认证可以留空）
+  - `api_token`: Jenkins API Token（在 Jenkins 用户设置中生成）
+- `proxy`: 代理配置（按项目区分，用于该项目的 SSO、API、Jenkins 请求）
+  - `enabled`: 是否启用该项目的代理
+  - `host`: 代理服务器地址
+  - `port`: 代理服务器端口
+  - `username`: 代理用户名（可选，无认证代理可不配置）
+  - `password`: 代理密码（可选，无认证代理可不配置）
+
+**重要**：
+- 每个项目可以配置独立的 Jenkins 服务器和代理
+- 不同项目可以使用不同的 Jenkins 实例和代理设置
+- 如果项目未配置 `jenkins` 或 `proxy`，则使用默认值（enabled: false）
 
 ### 3. 初始化数据库
 
-首次运行时会自动：
+运行初始化脚本：
+
+```bash
+python3 scripts/init_db.py
+```
+
+初始化脚本会：
 - 创建 SQLite 数据库（`data/workflows.db`）
-- 从 `config/settings.py` 初始化配置到数据库
-- 从 `config/options.json` 导入项目配置到数据库
+- 从 `scripts/init_db.py` 中的默认值初始化配置到数据库
+- 从 `scripts/options.json` 导入项目配置到数据库
+
+**重要**：首次运行前必须执行初始化脚本，否则 Bot 无法启动。
 
 ### 4. 运行Bot
 
@@ -124,6 +187,7 @@ python -m bot.bot
    - ✅ 群组消息会更新显示审批结果
    - ✅ 如果配置了外部API，Bot会自动调用外部接口同步审批结果
    - ✅ **如果启用了 SSO 集成，审批通过后会自动提交到 SSO 系统进行构建部署**
+   - ✅ **如果启用了 Jenkins 集成，审批通过后会自动触发 Jenkins 构建任务**
 
 ### SSO 集成流程
 
@@ -145,6 +209,30 @@ python -m bot.bot
    - 构建完成通知（成功/失败/终止）
    - 所有通知都会发送到原始工作流的群组
 
+### Jenkins 集成流程
+
+当审批通过且 Jenkins 集成已启用时：
+
+1. **自动触发 Jenkins 构建**：
+   - 解析工作流数据（项目、环境、服务、hash等）
+   - 直接使用 `services` 中的值作为 Jenkins Job 名称
+   - 为每个服务触发对应的 Jenkins Job 构建
+   - 传递构建参数（WORKFLOW_ID、PROJECT、ENVIRONMENT、SERVICE、GIT_HASH、APPROVER）
+
+2. **构建状态监控**：
+   - 后台监控每个构建的状态（轮询）
+   - 构建完成后自动发送 Telegram 通知
+
+3. **通知发送**：
+   - 构建完成后发送简洁的结果通知（成功/失败）
+   - 通知格式：`✅ 工作流已通过 — {job_name} 服务部署完成。`
+   - 所有通知都会发送到原始工作流的群组
+
+**注意**：
+- Service 名称直接作为 Jenkins Job 名称，无需映射配置
+- Services 和 Hashes 一一对应，通过索引获取对应的 hash
+- 支持多个服务同时构建，每个服务独立监控和通知
+
 ## 数据库存储
 
 系统使用 SQLite 数据库（`data/workflows.db`）持久化存储：
@@ -152,7 +240,8 @@ python -m bot.bot
 - **workflows**: 工作流记录
 - **sso_submissions**: SSO 提交记录
 - **sso_build_status**: SSO 构建状态记录
-- **app_config**: 应用配置（从 settings.py 初始化）
+- **jenkins_builds**: Jenkins 构建记录
+- **app_config**: 应用配置（从 init_db.py 初始化）
 - **project_options**: 项目配置（从 options.json 导入）
 
 数据保留 60 天，过期数据会自动清理。
@@ -179,17 +268,41 @@ python -m bot.bot
 - `SSO_AUTH_TOKEN`: SSO Auth Token
 - `SSO_AUTHORIZATION`: SSO Authorization
 
+**Jenkins 配置**（按项目配置，在 `scripts/options.json` 中）：
+- 每个项目在 `projects.{项目名}.jenkins` 中配置
+- `enabled`: 是否启用该项目的 Jenkins 集成
+- `url`: Jenkins 服务器地址
+- `username`: Jenkins 用户名（可选）
+- `api_token`: Jenkins API Token
+
+**代理配置**（按项目配置，在 `scripts/options.json` 中）：
+- 每个项目在 `projects.{项目名}.proxy` 中配置（用于该项目的 SSO、API、Jenkins 请求）
+- `enabled`: 是否启用该项目的代理
+- `host`: 代理服务器地址
+- `port`: 代理服务器端口
+- `username`: 代理用户名（可选）
+- `password`: 代理密码（可选）
+
+**全局代理配置**（用于 Telegram Bot，在 `scripts/init_db.py` 中）：
+- `PROXY_ENABLED`: 是否启用全局代理（用于 Telegram Bot）
+- `PROXY_HOST`: 代理主机
+- `PROXY_PORT`: 代理端口
+- `PROXY_USERNAME`: 代理用户名（可选）
+- `PROXY_PASSWORD`: 代理密码（可选）
+
 **外部 API 配置**：
 - `API_BASE_URL`: 外部API基础地址
 - `API_ENDPOINT`: API同步端点
 - `API_TOKEN`: API认证Token
 
-**代理配置**：
+**代理配置**（支持有/无用户名密码）：
 - `PROXY_ENABLED`: 是否启用代理
 - `PROXY_HOST`: 代理主机
 - `PROXY_PORT`: 代理端口
-- `PROXY_USERNAME`: 代理用户名
-- `PROXY_PASSWORD`: 代理密码
+- `PROXY_USERNAME`: 代理用户名（可选，无认证代理可不配置）
+- `PROXY_PASSWORD`: 代理密码（可选，无认证代理可不配置）
+
+**注意**：代理配置会被所有模块使用（Telegram Bot、SSO、API、Jenkins），统一管理。
 
 ## 项目结构
 
@@ -216,14 +329,22 @@ tg_workfolws_bot/
 │   ├── data_format.py    # 数据格式化
 │   ├── monitor.py        # 构建状态监控
 │   └── notifier.py       # SSO 通知器
+├── jenkins/        # Jenkins 集成模块
+│   ├── config.py   # Jenkins 配置
+│   ├── client.py   # Jenkins API 客户端
+│   ├── monitor.py  # 构建状态监控
+│   └── notifier.py # Jenkins 通知器
 ├── api/            # 外部API模块
 │   ├── client.py   # API客户端
 │   └── sync.py     # 数据同步
 ├── utils/          # 工具模块
 │   ├── logger.py   # 日志工具
 │   ├── formatter.py # 消息格式化
-│   └── helpers.py  # 辅助函数
+│   ├── helpers.py  # 辅助函数
+│   └── proxy.py    # 代理配置工具（统一管理所有模块的代理配置）
 ├── scripts/        # 工具脚本
+│   ├── init_db.py  # 数据库初始化脚本（必须运行）
+│   └── options.json # 项目配置文件
 ├── data/           # 数据目录（SQLite数据库）
 └── logs/           # 日志目录
 ```
@@ -231,17 +352,25 @@ tg_workfolws_bot/
 ## 注意事项
 
 - ✅ 使用 SQLite 数据库存储，Bot重启后数据不会丢失
+- ✅ **首次启动前必须运行 `python3 scripts/init_db.py` 初始化数据库**
 - ✅ 如果配置了外部API，审批结果会自动同步到外部系统
 - ✅ 如果启用了 SSO 集成，审批通过后会自动提交到 SSO 系统
+- ✅ 如果启用了 Jenkins 集成，审批通过后会自动触发 Jenkins 构建
 - ✅ 确保Bot已添加到目标群组并具有发送消息权限
-- ✅ 首次启动前请确保 `config/options.json` 文件存在且配置正确
+- ✅ 首次启动前请确保 `scripts/options.json` 文件存在且配置正确
 - ✅ SSO 集成需要配置 `SSO_AUTH_TOKEN` 和 `SSO_AUTHORIZATION` 才能正常工作
+- ✅ **Jenkins 集成按项目配置**：在 `scripts/options.json` 中为每个项目配置 `jenkins` 对象
+- ✅ **代理配置按项目区分**：在 `scripts/options.json` 中为每个项目配置 `proxy` 对象（用于该项目的 SSO、API、Jenkins 请求）
+- ✅ Service 名称直接作为 Jenkins Job 名称，无需额外映射配置
+- ✅ 代理配置支持有/无用户名密码两种方式
+- ✅ 不同项目可以使用不同的 Jenkins 服务器和代理设置
 
 ## 日志
 
 日志文件保存在 `logs/bot.log`，包含：
 - 工作流提交和审批记录
 - SSO 提交和构建监控记录
+- Jenkins 构建触发和监控记录
 - 错误和异常信息
 
 ## 许可证

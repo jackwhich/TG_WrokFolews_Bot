@@ -6,63 +6,114 @@ logger = setup_logger(__name__)
 
 
 class JenkinsConfig:
-    """Jenkins 系统配置类（从数据库读取配置）"""
+    """Jenkins 系统配置类（从项目配置中读取，按项目区分）"""
     
     @classmethod
-    def is_enabled(cls) -> bool:
-        """检查是否启用 Jenkins 集成"""
+    def _get_project_config(cls, project_name: str) -> dict:
+        """获取项目配置"""
         from workflows.models import WorkflowManager
-        value = WorkflowManager.get_app_config("JENKINS_ENABLED", "")
-        return value.lower() == "true" if value else False
+        options = WorkflowManager.get_project_options()
+        projects = options.get('projects', {})
+        project_config = projects.get(project_name, {})
+        return project_config.get('jenkins', {})
     
     @classmethod
-    def get_url(cls) -> str:
-        """获取 Jenkins 服务器 URL"""
-        from workflows.models import WorkflowManager
-        return WorkflowManager.get_app_config("JENKINS_URL", "")
-    
-    @classmethod
-    def get_username(cls) -> str:
-        """获取 Jenkins 用户名"""
-        from workflows.models import WorkflowManager
-        return WorkflowManager.get_app_config("JENKINS_USERNAME", "")
-    
-    @classmethod
-    def get_api_token(cls) -> str:
-        """获取 Jenkins API Token"""
-        from workflows.models import WorkflowManager
-        return WorkflowManager.get_app_config("JENKINS_API_TOKEN", "")
-    
-    @classmethod
-    def get_auth(cls) -> Tuple[str, str]:
+    def is_enabled(cls, project_name: str) -> bool:
         """
-        获取认证信息 (username, token)
+        检查指定项目的 Jenkins 集成是否启用
+        
+        Args:
+            project_name: 项目名称
+        
+        Returns:
+            如果启用返回 True，否则返回 False
+        """
+        jenkins_config = cls._get_project_config(project_name)
+        return jenkins_config.get('enabled', False)
+    
+    @classmethod
+    def get_url(cls, project_name: str) -> str:
+        """
+        获取指定项目的 Jenkins 服务器 URL
+        
+        Args:
+            project_name: 项目名称
+        
+        Returns:
+            Jenkins 服务器 URL
+        """
+        jenkins_config = cls._get_project_config(project_name)
+        return jenkins_config.get('url', '')
+    
+    @classmethod
+    def get_username(cls, project_name: str) -> str:
+        """
+        获取指定项目的 Jenkins 用户名
+        
+        Args:
+            project_name: 项目名称
+        
+        Returns:
+            Jenkins 用户名
+        """
+        jenkins_config = cls._get_project_config(project_name)
+        return jenkins_config.get('username', '')
+    
+    @classmethod
+    def get_api_token(cls, project_name: str) -> str:
+        """
+        获取指定项目的 Jenkins API Token
+        
+        Args:
+            project_name: 项目名称
+        
+        Returns:
+            Jenkins API Token
+        """
+        jenkins_config = cls._get_project_config(project_name)
+        return jenkins_config.get('api_token', '')
+    
+    @classmethod
+    def get_auth(cls, project_name: str) -> Tuple[str, str]:
+        """
+        获取指定项目的认证信息 (username, token)
+        
+        Args:
+            project_name: 项目名称
         
         Returns:
             (username, token) 元组，如果使用 Token 认证，username 可能为空
         """
-        username = cls.get_username()
-        token = cls.get_api_token()
+        username = cls.get_username(project_name)
+        token = cls.get_api_token(project_name)
         return (username, token)
     
     @classmethod
-    def validate(cls) -> bool:
-        """验证 Jenkins 配置是否完整"""
-        if not cls.is_enabled():
-            logger.debug("Jenkins 集成未启用")
+    def validate(cls, project_name: str) -> bool:
+        """
+        验证指定项目的 Jenkins 配置是否完整
+        
+        Args:
+            project_name: 项目名称
+        
+        Returns:
+            如果配置完整返回 True，否则返回 False
+        """
+        if not cls.is_enabled(project_name):
+            logger.debug(f"项目 {project_name} 的 Jenkins 集成未启用")
             return False
         
-        url = cls.get_url()
-        token = cls.get_api_token()
+        url = cls.get_url(project_name)
+        token = cls.get_api_token(project_name)
         
         if not url:
-            logger.error("JENKINS_URL 未配置")
+            logger.error(f"项目 {project_name} 的 JENKINS_URL 未配置")
             return False
         
         if not token:
-            logger.error("JENKINS_API_TOKEN 未配置")
+            logger.error(f"项目 {project_name} 的 JENKINS_API_TOKEN 未配置")
             return False
         
-        logger.debug("Jenkins 配置验证通过")
+        logger.debug(f"项目 {project_name} 的 Jenkins 配置验证通过")
         return True
 

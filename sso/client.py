@@ -12,15 +12,21 @@ logger = setup_logger(__name__)
 class SSOClient:
     """SSO API 客户端"""
     
-    def __init__(self):
-        """初始化 SSO 客户端"""
+    def __init__(self, project_name: str = None):
+        """
+        初始化 SSO 客户端
+        
+        Args:
+            project_name: 项目名称（可选），如果提供则使用该项目的代理配置，否则使用全局代理配置
+        """
+        self.project_name = project_name
         self.config = SSOConfig
         if not self.config.validate():
             logger.warning("SSO 配置验证失败，请检查配置")
         
-        # 初始化代理配置（使用与 TG bot 相同的代理配置）
+        # 初始化代理配置（如果提供了项目名称，使用项目配置；否则使用全局配置）
         from utils.proxy import get_proxy_config
-        self.proxies = get_proxy_config()
+        self.proxies = get_proxy_config(project_name)
     
     def get_job_ids(
         self,

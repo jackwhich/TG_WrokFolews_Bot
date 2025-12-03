@@ -328,7 +328,8 @@ class ApprovalHandler:
             logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             logger.info(f"📡 步骤 1/5: 正在获取 Job IDs...")
             logger.info(f"   项目: {project_name}, 环境: {environment}, 服务: {services}")
-            sso_client = SSOClient()
+            # 使用项目名称初始化 SSO 客户端（会使用该项目的代理配置）
+            sso_client = SSOClient(project_name=project_name)
             job_ids = await asyncio.to_thread(
                 sso_client.get_job_ids,
                 server_names=services,
@@ -417,7 +418,8 @@ class ApprovalHandler:
                 logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
                 logger.info(f"🔍 启动构建状态监控任务...")
                 logger.info(f"   发布 ID 数量: {len(release_ids)}")
-                monitor = SSOMonitor()
+                # 使用项目名称初始化 SSO 监控器（会使用该项目的代理配置）
+                monitor = SSOMonitor(project_name=project_name)
                 asyncio.create_task(
                     monitor.monitor_build_status(
                         release_ids=release_ids,
@@ -504,29 +506,7 @@ class ApprovalHandler:
         logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         
         try:
-            # 检查 Jenkins 是否启用
-            logger.info(f"📋 检查 Jenkins 是否启用...")
-            if not JenkinsConfig.is_enabled():
-                logger.warning(f"⚠️ Jenkins 集成未启用，跳过 Jenkins 构建 - 工作流ID: {workflow_id}")
-                logger.info(f"💡 提示：如需启用 Jenkins 集成，请修改 scripts/init_db.py 中的 DEFAULT_JENKINS_ENABLED = True，并配置 JENKINS_URL 和 JENKINS_API_TOKEN，然后运行 python3 scripts/init_db.py 更新数据库配置")
-                return
-            
-            logger.info(f"✅ Jenkins 集成已启用")
-            
-            # 验证 Jenkins 配置
-            logger.info(f"📋 验证 Jenkins 配置...")
-            if not JenkinsConfig.validate():
-                logger.error(f"❌ Jenkins 配置验证失败，无法触发构建 - 工作流ID: {workflow_id}")
-                logger.error(f"💡 请检查以下配置项：")
-                logger.error(f"   - JENKINS_URL: {JenkinsConfig.get_url()}")
-                logger.error(f"   - JENKINS_API_TOKEN: {'已配置' if JenkinsConfig.get_api_token() else '未配置'}")
-                return
-            
-            logger.info(f"✅ Jenkins 配置验证通过")
-            logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            logger.info(f"📝 开始触发 Jenkins 构建 - 工作流ID: {workflow_id}")
-            
-            # 解析提交数据
+            # 解析提交数据（先解析以获取项目名称）
             submission_data = workflow_data.get('submission_data', '')
             if not submission_data:
                 raise ValueError("工作流数据中缺少 submission_data")
@@ -550,6 +530,28 @@ class ApprovalHandler:
             logger.info(f"   🚀 服务数量: {len(services)}, 服务列表: {services}")
             logger.info(f"   🔑 Hash 数量: {len(hashes)}, Hash 列表: {hashes}")
             
+            # 检查该项目的 Jenkins 是否启用
+            logger.info(f"📋 检查项目 {project_name} 的 Jenkins 是否启用...")
+            if not JenkinsConfig.is_enabled(project_name):
+                logger.warning(f"⚠️ 项目 {project_name} 的 Jenkins 集成未启用，跳过 Jenkins 构建 - 工作流ID: {workflow_id}")
+                logger.info(f"💡 提示：如需启用 Jenkins 集成，请在 scripts/options.json 中为项目 {project_name} 配置 jenkins.enabled = true，并配置 jenkins.url 和 jenkins.api_token，然后运行 python3 scripts/init_db.py 更新数据库配置")
+                return
+            
+            logger.info(f"✅ 项目 {project_name} 的 Jenkins 集成已启用")
+            
+            # 验证该项目的 Jenkins 配置
+            logger.info(f"📋 验证项目 {project_name} 的 Jenkins 配置...")
+            if not JenkinsConfig.validate(project_name):
+                logger.error(f"❌ 项目 {project_name} 的 Jenkins 配置验证失败，无法触发构建 - 工作流ID: {workflow_id}")
+                logger.error(f"💡 请检查 scripts/options.json 中项目 {project_name} 的以下配置项：")
+                logger.error(f"   - jenkins.url: {JenkinsConfig.get_url(project_name)}")
+                logger.error(f"   - jenkins.api_token: {'已配置' if JenkinsConfig.get_api_token(project_name) else '未配置'}")
+                return
+            
+            logger.info(f"✅ 项目 {project_name} 的 Jenkins 配置验证通过")
+            logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            logger.info(f"📝 开始触发 Jenkins 构建 - 工作流ID: {workflow_id}")
+            
             # 验证服务与 hash 数量是否一致
             if len(services) != len(hashes):
                 error_msg = f"服务数量 ({len(services)}) 与 hash 数量 ({len(hashes)}) 不一致，无法触发 Jenkins 构建"
@@ -558,8 +560,9 @@ class ApprovalHandler:
             
             logger.info(f"✅ 数据验证通过，将为 {len(services)} 个服务触发 Jenkins 构建")
             
-            jenkins_client = JenkinsClient()
-            monitor = JenkinsMonitor()
+            # 使用项目名称初始化 Jenkins 客户端和监控器（会使用该项目的配置和代理）
+            jenkins_client = JenkinsClient(project_name)
+            monitor = JenkinsMonitor(project_name)
             
             # 为每个服务触发构建
             # 注意：services 中的值就是 Jenkins Job 名称，不需要映射

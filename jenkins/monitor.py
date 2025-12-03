@@ -13,9 +13,15 @@ logger = setup_logger(__name__)
 class JenkinsMonitor:
     """Jenkins 构建状态监控器"""
     
-    def __init__(self):
-        """初始化监控器"""
-        self.client = JenkinsClient()
+    def __init__(self, project_name: str):
+        """
+        初始化监控器
+        
+        Args:
+            project_name: 项目名称，用于获取该项目的 Jenkins 配置
+        """
+        self.project_name = project_name
+        self.client = JenkinsClient(project_name)
     
     async def monitor_build(
         self,

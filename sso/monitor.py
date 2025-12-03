@@ -12,9 +12,15 @@ logger = setup_logger(__name__)
 class SSOMonitor:
     """SSO 构建状态监控器"""
     
-    def __init__(self):
-        """初始化监控器"""
-        self.client = SSOClient()
+    def __init__(self, project_name: str = None):
+        """
+        初始化监控器
+        
+        Args:
+            project_name: 项目名称（可选），如果提供则使用该项目的代理配置
+        """
+        self.project_name = project_name
+        self.client = SSOClient(project_name=project_name)
     
     async def monitor_build_status(
         self,

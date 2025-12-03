@@ -13,18 +13,24 @@ logger = setup_logger(__name__)
 class JenkinsClient:
     """Jenkins API 客户端"""
     
-    def __init__(self):
-        """初始化 Jenkins 客户端"""
-        self.config = JenkinsConfig
-        if not self.config.validate():
-            logger.warning("Jenkins 配置验证失败，请检查配置")
+    def __init__(self, project_name: str):
+        """
+        初始化 Jenkins 客户端
         
-        # 初始化代理配置（使用全局代理配置）
-        self.proxies = get_proxy_config()
+        Args:
+            project_name: 项目名称，用于获取该项目的 Jenkins 配置
+        """
+        self.project_name = project_name
+        self.config = JenkinsConfig
+        if not self.config.validate(project_name):
+            logger.warning(f"项目 {project_name} 的 Jenkins 配置验证失败，请检查配置")
+        
+        # 初始化代理配置（使用项目配置的代理）
+        self.proxies = get_proxy_config(project_name)
     
     def _get_auth(self) -> Optional[HTTPBasicAuth]:
         """获取认证信息"""
-        username, token = self.config.get_auth()
+        username, token = self.config.get_auth(self.project_name)
         if token:
             # 如果配置了用户名，使用用户名+Token；否则只使用Token（Jenkins支持）
             auth_username = username if username else token
@@ -33,7 +39,7 @@ class JenkinsClient:
     
     def _build_url(self, path: str) -> str:
         """构建完整的 Jenkins API URL"""
-        base_url = self.config.get_url().rstrip('/')
+        base_url = self.config.get_url(self.project_name).rstrip('/')
         path = path.lstrip('/')
         return f"{base_url}/{path}"
     
