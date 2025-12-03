@@ -277,13 +277,8 @@ class ApprovalHandler:
                 logger.error(f"   - SSO_AUTH_TOKEN: {'已配置' if SSOConfig.get_auth_token() else '未配置'}")
                 logger.error(f"   - SSO_AUTHORIZATION: {'已配置' if SSOConfig.get_authorization() else '未配置'}")
                 
-                error_msg = "SSO 配置验证失败，请检查配置（需要配置 SSO_AUTH_TOKEN 和 SSO_AUTHORIZATION）"
-                await SSONotifier.notify_submission_failed(
-                    context=context,
-                    workflow_data=workflow_data,
-                    error_message=error_msg
-                )
-                logger.error(f"📢 已发送 SSO 配置失败通知到群组")
+                logger.error(f"💡 提示：请配置 SSO_AUTH_TOKEN 和 SSO_AUTHORIZATION 后重启 Bot")
+                # 不发送配置失败通知给用户，只在日志中记录
                 return
             
             logger.info(f"✅ SSO 配置验证通过")
@@ -455,22 +450,12 @@ class ApprovalHandler:
             except Exception as update_error:
                 logger.error(f"❌ 更新 SSO 提交状态失败: {update_error}", exc_info=True)
             
-            # 发送失败通知
-            try:
-                logger.info(f"📢 正在发送 SSO 提交失败通知...")
-                await SSONotifier.notify_submission_failed(
-                    context=context,
-                    workflow_data=workflow_data,
-                    error_message=str(e)
-                )
-                logger.info(f"✅ SSO 失败通知已发送")
-            except Exception as notify_error:
-                logger.error(f"❌ 发送 SSO 失败通知失败: {notify_error}", exc_info=True)
-            
-            # 不抛出异常，避免影响审批流程
+            # 不发送失败通知给用户，只在日志中记录错误
+            # SSO 提交失败不影响审批流程，错误信息已记录在日志中
             logger.warning(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             logger.warning(f"⚠️ SSO 提交失败，但审批流程已完成")
             logger.warning(f"   工作流ID: {workflow_id}")
             logger.warning(f"   审批流程不受影响，工作流状态已更新为 'approved'")
+            logger.warning(f"   SSO 错误已记录在日志中，不向用户发送失败通知")
             logger.warning(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
