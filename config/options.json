@@ -1,0 +1,30 @@
+{
+  "projects": {
+    "EBPAY": {
+      "group_ids": [-5036335599],
+      "environments": ["UAT", "GRAY-UAT"],
+      "services": {
+        "UAT": ["pre-admin-export", "pre-adminmanager", "pre-eb-web-api"],
+        "GRAY-UAT": ["gray-pre-admin-export", "gray-pre-adminmanager", "gray-pre-eb-web-api"]
+      }
+    },
+    "项目B": {
+      "group_ids": [-1001234567890],
+      "environments": ["dev", "test", "prod"],
+      "services": {
+        "dev": ["服务B1", "服务B2"],
+        "test": ["服务B1", "服务B2"],
+        "prod": ["服务B1", "服务B2"]
+      }
+    },
+    "项目C": {
+      "group_ids": [-1001234567890],
+      "environments": ["dev", "test"],
+      "services": {
+        "dev": ["服务C1"],
+        "test": ["服务C1"]
+      }
+    }
+  }
+}
+
