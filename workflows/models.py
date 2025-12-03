@@ -225,8 +225,53 @@ class WorkflowManager:
             ON sso_build_status(notified)
         """)
         
+        # ========== Jenkins 相关数据库表 ==========
+        # Jenkins 构建记录表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS jenkins_builds (
+                build_id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                job_name TEXT NOT NULL,
+                job_url TEXT,
+                build_number INTEGER,
+                build_status TEXT NOT NULL DEFAULT 'BUILDING',
+                build_start_time INTEGER,
+                build_end_time INTEGER,
+                build_duration INTEGER,
+                build_console_output TEXT,
+                build_parameters TEXT,
+                notified INTEGER NOT NULL DEFAULT 0,
+                notification_time INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (workflow_id) REFERENCES workflows(workflow_id) ON DELETE CASCADE
+            )
+        """)
+        
+        # Jenkins 相关索引
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_jenkins_builds_workflow_id 
+            ON jenkins_builds(workflow_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_jenkins_builds_job_name 
+            ON jenkins_builds(job_name)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_jenkins_builds_build_status 
+            ON jenkins_builds(build_status)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_jenkins_builds_notified 
+            ON jenkins_builds(notified)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_jenkins_builds_workflow_status 
+            ON jenkins_builds(workflow_id, build_status)
+        """)
+        
         conn.commit()
-        logger.info("✅ 数据库表结构和索引初始化完成（包含单列索引和复合索引，以及 SSO 相关表）")
+        logger.info("✅ 数据库表结构和索引初始化完成（包含单列索引和复合索引，以及 SSO 和 Jenkins 相关表）")
     
     @classmethod
     def _init_project_options(cls, options_file: Path = None, force_update: bool = False):
@@ -982,3 +1027,230 @@ class WorkflowManager:
         except Exception as e:
             logger.error(f"标记构建已通知失败: {e}", exc_info=True)
             raise
+    
+    # ========== Jenkins 相关数据库操作方法 ==========
+    
+    @classmethod
+    def create_jenkins_build(
+        cls,
+        workflow_id: str,
+        job_name: str,
+        build_number: Optional[int] = None,
+        job_url: Optional[str] = None,
+        build_status: str = 'BUILDING',
+        build_parameters: Optional[Dict] = None
+    ) -> Dict:
+        """
+        创建 Jenkins 构建记录
+        
+        Args:
+            workflow_id: 工作流ID
+            job_name: Jenkins Job 名称
+            build_number: Jenkins 构建编号（可选）
+            job_url: Jenkins Job URL（可选）
+            build_status: 构建状态（默认 BUILDING）
+            build_parameters: 构建参数（可选，JSON 格式）
+            
+        Returns:
+            Jenkins 构建记录字典
+        """
+        conn = cls._get_connection()
+        cursor = conn.cursor()
+        
+        # 生成构建ID
+        build_id = f"JENKINS-{int(time.time())}-{str(uuid.uuid4())[:8].upper()}"
+        build_start_time = int(time.time())
+        created_at = get_current_timestamp()
+        updated_at = created_at
+        
+        try:
+            cursor.execute("""
+                INSERT INTO jenkins_builds (
+                    build_id, workflow_id, job_name, job_url, build_number,
+                    build_status, build_start_time, build_parameters,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                build_id,
+                workflow_id,
+                job_name,
+                job_url,
+                build_number,
+                build_status,
+                build_start_time,
+                json.dumps(build_parameters, ensure_ascii=False) if build_parameters else None,
+                created_at,
+                updated_at
+            ))
+            
+            conn.commit()
+            logger.info(f"✅ Jenkins 构建记录已创建 - Build ID: {build_id}, Job: {job_name}, Build: {build_number}")
+            
+            return {
+                'build_id': build_id,
+                'workflow_id': workflow_id,
+                'job_name': job_name,
+                'job_url': job_url,
+                'build_number': build_number,
+                'build_status': build_status,
+                'build_start_time': build_start_time,
+                'build_parameters': build_parameters,
+                'created_at': created_at,
+                'updated_at': updated_at
+            }
+        except Exception as e:
+            logger.error(f"创建 Jenkins 构建记录失败: {e}", exc_info=True)
+            raise
+    
+    @classmethod
+    def update_jenkins_build(cls, build_id: str, **kwargs) -> bool:
+        """
+        更新 Jenkins 构建记录
+        
+        Args:
+            build_id: 构建ID
+            **kwargs: 要更新的字段
+        
+        Returns:
+            是否成功
+        """
+        conn = cls._get_connection()
+        cursor = conn.cursor()
+        
+        updated_at = get_current_timestamp()
+        update_fields = ["updated_at = ?"]
+        values = [updated_at]
+        
+        # 处理特殊字段
+        if 'build_parameters' in kwargs and kwargs['build_parameters']:
+            kwargs['build_parameters'] = json.dumps(kwargs['build_parameters'], ensure_ascii=False)
+        
+        # 构建 SQL 更新语句
+        allowed_fields = [
+            'job_name', 'job_url', 'build_number', 'build_status',
+            'build_start_time', 'build_end_time', 'build_duration',
+            'build_console_output', 'build_parameters'
+        ]
+        
+        for field, value in kwargs.items():
+            if field in allowed_fields:
+                update_fields.append(f"{field} = ?")
+                values.append(value)
+        
+        if len(update_fields) == 1:  # 只有 updated_at
+            logger.warning(f"没有有效的更新字段 - Build ID: {build_id}")
+            return False
+        
+        values.append(build_id)
+        
+        try:
+            cursor.execute(f"""
+                UPDATE jenkins_builds 
+                SET {', '.join(update_fields)}
+                WHERE build_id = ?
+            """, values)
+            
+            conn.commit()
+            logger.debug(f"Jenkins 构建记录已更新 - Build ID: {build_id}, 更新字段: {list(kwargs.keys())}")
+            return True
+        except Exception as e:
+            logger.error(f"更新 Jenkins 构建记录失败 - Build ID: {build_id}, 错误: {str(e)}", exc_info=True)
+            return False
+    
+    @classmethod
+    def get_jenkins_build_by_workflow(cls, workflow_id: str) -> Optional[Dict]:
+        """
+        根据工作流ID获取 Jenkins 构建记录
+        
+        Args:
+            workflow_id: 工作流ID
+            
+        Returns:
+            Jenkins 构建记录字典，如果不存在返回 None
+        """
+        conn = cls._get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT * FROM jenkins_builds 
+            WHERE workflow_id = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+        """, (workflow_id,))
+        
+        row = cursor.fetchone()
+        if row:
+            data = dict(row)
+            # 解析 JSON 字段
+            if data.get('build_parameters'):
+                try:
+                    data['build_parameters'] = json.loads(data['build_parameters'])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            return data
+        
+        return None
+    
+    @classmethod
+    def get_pending_jenkins_notifications(cls) -> List[Dict]:
+        """
+        获取待通知的 Jenkins 构建（构建完成但未通知）
+        
+        Returns:
+            Jenkins 构建记录列表
+        """
+        conn = cls._get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT * FROM jenkins_builds 
+            WHERE build_status IN ('SUCCESS', 'FAILURE', 'ABORTED', 'UNSTABLE')
+            AND notified = 0
+            ORDER BY build_end_time ASC
+        """)
+        
+        rows = cursor.fetchall()
+        results = []
+        
+        for row in rows:
+            data = dict(row)
+            # 解析 JSON 字段
+            if data.get('build_parameters'):
+                try:
+                    data['build_parameters'] = json.loads(data['build_parameters'])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            results.append(data)
+        
+        return results
+    
+    @classmethod
+    def mark_jenkins_build_notified(cls, build_id: str) -> bool:
+        """
+        标记 Jenkins 构建已通知
+        
+        Args:
+            build_id: 构建ID
+        
+        Returns:
+            是否成功
+        """
+        conn = cls._get_connection()
+        cursor = conn.cursor()
+        
+        notification_time = int(time.time())
+        updated_at = get_current_timestamp()
+        
+        try:
+            cursor.execute("""
+                UPDATE jenkins_builds 
+                SET notified = 1, notification_time = ?, updated_at = ?
+                WHERE build_id = ?
+            """, (notification_time, updated_at, build_id))
+            
+            conn.commit()
+            logger.debug(f"Jenkins 构建已标记为已通知 - Build ID: {build_id}")
+            return True
+        except Exception as e:
+            logger.error(f"标记 Jenkins 构建已通知失败: {e}", exc_info=True)
+            return False

@@ -41,7 +41,7 @@ data/
 *.swp
 *.swo
 *~
-
+*.txt
 # OS
 .DS_Store
 Thumbs.db

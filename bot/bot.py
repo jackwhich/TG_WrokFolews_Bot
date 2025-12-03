@@ -108,30 +108,11 @@ def main():
     }
     
     # 如果启用了代理，添加代理配置
-    proxy_enabled = WorkflowManager.get_app_config("PROXY_ENABLED", "")
-    proxy_url = None
-    if proxy_enabled and proxy_enabled.lower() == "true":
-        proxy_host = WorkflowManager.get_app_config("PROXY_HOST", "")
-        proxy_port_str = WorkflowManager.get_app_config("PROXY_PORT", "")
-        try:
-            proxy_port = int(proxy_port_str) if proxy_port_str else 0
-        except ValueError:
-            proxy_port = 0
-        
-        if proxy_host and proxy_port:
-            proxy_username = WorkflowManager.get_app_config("PROXY_USERNAME", "")
-            proxy_password = WorkflowManager.get_app_config("PROXY_PASSWORD", "")
-            if proxy_username and proxy_password:
-                from urllib.parse import quote
-                username = quote(proxy_username, safe='')
-                password = quote(proxy_password, safe='')
-                proxy_url = f"http://{username}:{password}@{proxy_host}:{proxy_port}"
-            else:
-                proxy_url = f"http://{proxy_host}:{proxy_port}"
-    
+    from utils.proxy import get_proxy_url
+    proxy_url = get_proxy_url()
     if proxy_url:
         request_kwargs["proxy_url"] = proxy_url
-        logger.info(f"✅ 已配置代理: {proxy_host}:{proxy_port}")
+        logger.info("✅ 已配置代理")
     else:
         logger.info("ℹ️ 未启用代理")
     

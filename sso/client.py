@@ -19,49 +19,8 @@ class SSOClient:
             logger.warning("SSO 配置验证失败，请检查配置")
         
         # 初始化代理配置（使用与 TG bot 相同的代理配置）
-        self.proxies = self._get_proxies()
-    
-    def _get_proxies(self) -> Optional[Dict[str, str]]:
-        """
-        获取代理配置（使用与 TG bot 相同的代理配置）
-        
-        Returns:
-            代理字典，如果未启用代理则返回 None
-        """
-        from workflows.models import WorkflowManager
-        proxy_enabled = WorkflowManager.get_app_config("PROXY_ENABLED", "")
-        if not proxy_enabled or proxy_enabled.lower() != "true":
-            return None
-        
-        proxy_host = WorkflowManager.get_app_config("PROXY_HOST", "")
-        proxy_port_str = WorkflowManager.get_app_config("PROXY_PORT", "")
-        try:
-            proxy_port = int(proxy_port_str) if proxy_port_str else 0
-        except ValueError:
-            proxy_port = 0
-        
-        if not proxy_host or not proxy_port:
-            return None
-        
-        # 构建代理URL
-        proxy_username = WorkflowManager.get_app_config("PROXY_USERNAME", "")
-        proxy_password = WorkflowManager.get_app_config("PROXY_PASSWORD", "")
-        if proxy_username and proxy_password:
-            from urllib.parse import quote
-            username = quote(proxy_username, safe='')
-            password = quote(proxy_password, safe='')
-            proxy_url = f"http://{username}:{password}@{proxy_host}:{proxy_port}"
-        else:
-            proxy_url = f"http://{proxy_host}:{proxy_port}"
-        
-        proxies = {
-            "http": proxy_url,
-            "https": proxy_url
-        }
-        logger.debug(f"SSO 客户端已配置代理: {proxy_host}:{proxy_port}")
-        return proxies
-        
-        return None
+        from utils.proxy import get_proxy_config
+        self.proxies = get_proxy_config()
     
     def get_job_ids(
         self,

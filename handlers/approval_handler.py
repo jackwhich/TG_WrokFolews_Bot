@@ -195,6 +195,13 @@ class ApprovalHandler:
                             workflow_data=updated_workflow,
                             approver_username=approver_username
                         )
+                        
+                        # Jenkins 构建触发（仅在审批通过时执行）
+                        await ApprovalHandler._trigger_jenkins_build(
+                            context=context,
+                            workflow_data=updated_workflow,
+                            approver_username=approver_username
+                        )
                     
                     # 更新群组消息（会自动更新所有群组的消息）
                     logger.info(f"正在更新群组消息 - 工作流ID: {workflow_id}")
@@ -467,5 +474,194 @@ class ApprovalHandler:
             logger.warning(f"   工作流ID: {workflow_id}")
             logger.warning(f"   审批流程不受影响，工作流状态已更新为 'approved'")
             logger.warning(f"   SSO 错误已记录在日志中，不向用户发送失败通知")
+            logger.warning(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    
+    @staticmethod
+    async def _trigger_jenkins_build(
+        context: ContextTypes.DEFAULT_TYPE,
+        workflow_data: dict,
+        approver_username: str
+    ):
+        """
+        触发 Jenkins 构建（在审批通过后调用）
+        
+        Args:
+            context: Telegram 上下文对象
+            workflow_data: 完整的工作流数据（从数据库获取）
+            approver_username: 审批人用户名
+        """
+        import asyncio
+        from jenkins.config import JenkinsConfig
+        from jenkins.client import JenkinsClient
+        from jenkins.monitor import JenkinsMonitor
+        from jenkins.notifier import JenkinsNotifier
+        from sso.data_converter import parse_tg_submission_data
+        
+        workflow_id = workflow_data.get('workflow_id')
+        
+        logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        logger.info(f"🚀 开始 Jenkins 构建流程 - 工作流ID: {workflow_id}")
+        logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        
+        try:
+            # 检查 Jenkins 是否启用
+            logger.info(f"📋 检查 Jenkins 是否启用...")
+            if not JenkinsConfig.is_enabled():
+                logger.warning(f"⚠️ Jenkins 集成未启用，跳过 Jenkins 构建 - 工作流ID: {workflow_id}")
+                logger.info(f"💡 提示：如需启用 Jenkins 集成，请修改 scripts/init_db.py 中的 DEFAULT_JENKINS_ENABLED = True，并配置 JENKINS_URL 和 JENKINS_API_TOKEN，然后运行 python3 scripts/init_db.py 更新数据库配置")
+                return
+            
+            logger.info(f"✅ Jenkins 集成已启用")
+            
+            # 验证 Jenkins 配置
+            logger.info(f"📋 验证 Jenkins 配置...")
+            if not JenkinsConfig.validate():
+                logger.error(f"❌ Jenkins 配置验证失败，无法触发构建 - 工作流ID: {workflow_id}")
+                logger.error(f"💡 请检查以下配置项：")
+                logger.error(f"   - JENKINS_URL: {JenkinsConfig.get_url()}")
+                logger.error(f"   - JENKINS_API_TOKEN: {'已配置' if JenkinsConfig.get_api_token() else '未配置'}")
+                return
+            
+            logger.info(f"✅ Jenkins 配置验证通过")
+            logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            logger.info(f"📝 开始触发 Jenkins 构建 - 工作流ID: {workflow_id}")
+            
+            # 解析提交数据
+            submission_data = workflow_data.get('submission_data', '')
+            if not submission_data:
+                raise ValueError("工作流数据中缺少 submission_data")
+            
+            tg_data = parse_tg_submission_data(submission_data)
+            project_name = tg_data.get('project')
+            environment = tg_data.get('environment')
+            services = tg_data.get('services', [])
+            hashes = tg_data.get('hashes', [])
+            
+            if not project_name:
+                raise ValueError("无法从提交数据中解析项目名称")
+            if not environment:
+                raise ValueError("无法从提交数据中解析环境")
+            if not services:
+                raise ValueError("未找到要部署的服务列表")
+            
+            logger.info(f"✅ 解析 Jenkins 构建数据成功")
+            logger.info(f"   📦 项目: {project_name}")
+            logger.info(f"   🌍 环境: {environment}")
+            logger.info(f"   🚀 服务数量: {len(services)}, 服务列表: {services}")
+            logger.info(f"   🔑 Hash 数量: {len(hashes)}, Hash 列表: {hashes}")
+            
+            # 验证服务与 hash 数量是否一致
+            if len(services) != len(hashes):
+                error_msg = f"服务数量 ({len(services)}) 与 hash 数量 ({len(hashes)}) 不一致，无法触发 Jenkins 构建"
+                logger.error(f"❌ {error_msg} - 工作流ID: {workflow_id}")
+                raise ValueError(error_msg)
+            
+            logger.info(f"✅ 数据验证通过，将为 {len(services)} 个服务触发 Jenkins 构建")
+            
+            jenkins_client = JenkinsClient()
+            monitor = JenkinsMonitor()
+            
+            # 为每个服务触发构建
+            # 注意：services 中的值就是 Jenkins Job 名称，不需要映射
+            # hashes 与 services 一一对应，通过索引获取
+            for idx, service_name in enumerate(services):
+                # 直接使用 service_name 作为 Jenkins Job 名称
+                job_name = service_name
+                
+                logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                logger.info(f"📡 [{idx + 1}/{len(services)}] 触发 Jenkins 构建")
+                logger.info(f"   服务名称: {service_name}")
+                logger.info(f"   Jenkins Job: {job_name}")
+                
+                # 获取对应的 Git Hash（与 service 一一对应）
+                git_hash = hashes[idx] if idx < len(hashes) else None
+                if git_hash:
+                    logger.info(f"   🔑 Git Hash: {git_hash}")
+                else:
+                    logger.warning(f"   ⚠️ 未找到对应的 Git Hash（索引: {idx}）")
+                
+                # 构建参数
+                build_parameters = {
+                    'WORKFLOW_ID': workflow_id,
+                    'PROJECT': project_name,
+                    'ENVIRONMENT': environment,
+                    'SERVICE': service_name,
+                    'APPROVER': approver_username
+                }
+                
+                # 添加 Git Hash（如果存在）
+                if git_hash:
+                    build_parameters['GIT_HASH'] = git_hash
+                
+                # 触发构建
+                build_result = await asyncio.to_thread(
+                    jenkins_client.trigger_build,
+                    job_name=job_name,
+                    parameters=build_parameters
+                )
+                
+                queue_id = build_result.get('queue_id')
+                logger.info(f"✅ Jenkins 构建已触发 - Job: {job_name}, Queue ID: {queue_id}")
+                
+                # 等待构建开始并获取构建编号
+                if queue_id:
+                    build_number = await asyncio.to_thread(
+                        jenkins_client.wait_for_build_to_start,
+                        job_name=job_name,
+                        queue_id=queue_id,
+                        timeout=60
+                    )
+                    
+                    if build_number:
+                        logger.info(f"✅ 构建已开始 - Job: {job_name}, Build: #{build_number}")
+                        
+                        # 创建构建记录
+                        build_record = await asyncio.to_thread(
+                            WorkflowManager.create_jenkins_build,
+                            workflow_id=workflow_id,
+                            job_name=job_name,
+                            build_number=build_number,
+                            job_url=build_result.get('job_url'),
+                            build_status='BUILDING',
+                            build_parameters=build_parameters
+                        )
+                        
+                        # 不发送构建开始通知，只等待构建完成后发送结果通知
+                        # 启动构建状态监控任务（在后台运行，不阻塞）
+                        logger.info(f"🔍 启动构建状态监控任务...")
+                        asyncio.create_task(
+                            monitor.monitor_build(
+                                workflow_id=workflow_id,
+                                job_name=job_name,
+                                build_number=build_number,
+                                context=context
+                            )
+                        )
+                        logger.info(f"✅ 已启动构建监控任务（后台运行）")
+                    else:
+                        logger.warning(f"⚠️ 等待构建开始超时 - Job: {job_name}, Queue ID: {queue_id}")
+                else:
+                    logger.warning(f"⚠️ 未获取到 Queue ID - Job: {job_name}")
+            
+            logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            logger.info(f"✅ Jenkins 构建流程全部完成！")
+            logger.info(f"   工作流ID: {workflow_id}")
+            logger.info(f"   成功触发构建数: {len(services)} 个")
+            logger.info(f"   构建任务已在后台运行，完成后将自动通知")
+            logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            
+        except Exception as e:
+            logger.error(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            logger.error(f"❌ Jenkins 构建触发失败 - 工作流ID: {workflow_id}")
+            logger.error(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            logger.error(f"错误类型: {type(e).__name__}")
+            logger.error(f"错误信息: {str(e)}")
+            logger.error(f"详细错误:", exc_info=True)
+            
+            logger.warning(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            logger.warning(f"⚠️ Jenkins 构建触发失败，但审批流程已完成")
+            logger.warning(f"   工作流ID: {workflow_id}")
+            logger.warning(f"   审批流程不受影响，工作流状态已更新为 'approved'")
+            logger.warning(f"   Jenkins 错误已记录在日志中，不向用户发送失败通知")
             logger.warning(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 

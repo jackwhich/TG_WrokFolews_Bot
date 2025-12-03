@@ -16,34 +16,10 @@ class APIClient:
         self.timeout = Settings.API_TIMEOUT
         self.token = Settings.API_TOKEN
         # 如果启用了代理，配置代理
-        self.proxies = None
-        from workflows.models import WorkflowManager
-        proxy_enabled = WorkflowManager.get_app_config("PROXY_ENABLED", "")
-        if proxy_enabled and proxy_enabled.lower() == "true":
-            proxy_host = WorkflowManager.get_app_config("PROXY_HOST", "")
-            proxy_port_str = WorkflowManager.get_app_config("PROXY_PORT", "")
-            try:
-                proxy_port = int(proxy_port_str) if proxy_port_str else 0
-            except ValueError:
-                proxy_port = 0
-            
-            if proxy_host and proxy_port:
-                # 构建代理URL
-                proxy_username = WorkflowManager.get_app_config("PROXY_USERNAME", "")
-                proxy_password = WorkflowManager.get_app_config("PROXY_PASSWORD", "")
-                if proxy_username and proxy_password:
-                    from urllib.parse import quote
-                    username = quote(proxy_username, safe='')
-                    password = quote(proxy_password, safe='')
-                    proxy_url = f"http://{username}:{password}@{proxy_host}:{proxy_port}"
-                else:
-                    proxy_url = f"http://{proxy_host}:{proxy_port}"
-                
-                self.proxies = {
-                    "http": proxy_url,
-                    "https": proxy_url
-                }
-                logger.info(f"✅ API客户端已配置代理: {proxy_host}:{proxy_port}")
+        from utils.proxy import get_proxy_config
+        self.proxies = get_proxy_config()
+        if self.proxies:
+            logger.info("✅ API客户端已配置代理")
     
     def _get_headers(self) -> Dict[str, str]:
         """获取请求头"""
