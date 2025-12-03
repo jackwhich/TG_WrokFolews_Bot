@@ -1,7 +1,6 @@
 """代理配置工具模块"""
 from typing import Optional, Dict
 from urllib.parse import quote
-from workflows.models import WorkflowManager
 from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -18,6 +17,9 @@ def get_proxy_config() -> Optional[Dict[str, str]]:
         代理字典，格式为 {"http": "http://proxy_url", "https": "http://proxy_url"}
         如果未启用代理或配置不完整，返回 None
     """
+    # 延迟导入，避免循环导入
+    from workflows.models import WorkflowManager
+    
     proxy_enabled = WorkflowManager.get_app_config("PROXY_ENABLED", "")
     if not proxy_enabled or proxy_enabled.lower() != "true":
         return None
@@ -32,14 +34,17 @@ def get_proxy_config() -> Optional[Dict[str, str]]:
     if not proxy_host or not proxy_port:
         return None
     
-    # 构建代理URL（支持用户名密码认证）
+    # 构建代理URL（支持有/无用户名密码认证）
+    # 如果配置了用户名和密码，使用认证格式；否则使用无认证格式
     proxy_username = WorkflowManager.get_app_config("PROXY_USERNAME", "")
     proxy_password = WorkflowManager.get_app_config("PROXY_PASSWORD", "")
     if proxy_username and proxy_password:
+        # 有用户名和密码：http://username:password@host:port
         username = quote(proxy_username, safe='')
         password = quote(proxy_password, safe='')
         proxy_url = f"http://{username}:{password}@{proxy_host}:{proxy_port}"
     else:
+        # 无用户名和密码：http://host:port
         proxy_url = f"http://{proxy_host}:{proxy_port}"
     
     proxies = {
@@ -61,6 +66,9 @@ def get_proxy_url() -> Optional[str]:
         代理 URL 字符串，格式为 "http://proxy_host:proxy_port" 或 "http://username:password@proxy_host:proxy_port"
         如果未启用代理或配置不完整，返回 None
     """
+    # 延迟导入，避免循环导入
+    from workflows.models import WorkflowManager
+    
     proxy_enabled = WorkflowManager.get_app_config("PROXY_ENABLED", "")
     if not proxy_enabled or proxy_enabled.lower() != "true":
         return None
@@ -75,14 +83,17 @@ def get_proxy_url() -> Optional[str]:
     if not proxy_host or not proxy_port:
         return None
     
-    # 构建代理URL（支持用户名密码认证）
+    # 构建代理URL（支持有/无用户名密码认证）
+    # 如果配置了用户名和密码，使用认证格式；否则使用无认证格式
     proxy_username = WorkflowManager.get_app_config("PROXY_USERNAME", "")
     proxy_password = WorkflowManager.get_app_config("PROXY_PASSWORD", "")
     if proxy_username and proxy_password:
+        # 有用户名和密码：http://username:password@host:port
         username = quote(proxy_username, safe='')
         password = quote(proxy_password, safe='')
         proxy_url = f"http://{username}:{password}@{proxy_host}:{proxy_port}"
     else:
+        # 无用户名和密码：http://host:port
         proxy_url = f"http://{proxy_host}:{proxy_port}"
     
     logger.debug(f"代理 URL 已获取: {proxy_host}:{proxy_port}")
@@ -96,6 +107,9 @@ def is_proxy_enabled() -> bool:
     Returns:
         如果代理已启用返回 True，否则返回 False
     """
+    # 延迟导入，避免循环导入
+    from workflows.models import WorkflowManager
+    
     proxy_enabled = WorkflowManager.get_app_config("PROXY_ENABLED", "")
     return proxy_enabled.lower() == "true" if proxy_enabled else False
 
