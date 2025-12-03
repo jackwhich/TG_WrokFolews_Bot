@@ -31,15 +31,15 @@ logger = setup_logger(__name__)
 
 # Telegram Bot Token
 # 在这里填入你的 BOT_TOKEN，例如: "1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
-DEFAULT_BOT_TOKEN = "7984347044:AAGgeCj8tQSLRFCWDsJXaleBazgSpYz2mrw"
+DEFAULT_BOT_TOKEN = "xxxxxx"
 
 # 审批人用户名
 # 在这里填入审批人的 Telegram 用户名，例如: "username"（不带 @ 符号）
-DEFAULT_APPROVER_USERNAME = "bob68888"
+DEFAULT_APPROVER_USERNAME = "xxxxx"
 
 # SSO 配置
 DEFAULT_SSO_ENABLED: bool = True
-DEFAULT_SSO_URL: str = "https://c.zfit999.com"
+DEFAULT_SSO_URL: str = "https://xxxxx"
 DEFAULT_SSO_AUTH_TOKEN: str = ""
 DEFAULT_SSO_AUTHORIZATION: str = ""
 
