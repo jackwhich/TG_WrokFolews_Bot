@@ -1,24 +1,28 @@
 """日志工具"""
 import logging
 from pathlib import Path
-from config.settings import Settings
+
+
+# 日志配置（直接在代码中配置，不存储在数据库中）
+LOG_LEVEL: str = "INFO"
+LOG_FILE: str = "./logs/bot.log"
 
 
 def setup_logger(name: str = "tg_workflows_bot") -> logging.Logger:
     """设置日志记录器"""
     logger = logging.getLogger(name)
-    logger.setLevel(getattr(logging, Settings.LOG_LEVEL.upper(), logging.INFO))
+    logger.setLevel(getattr(logging, LOG_LEVEL.upper(), logging.INFO))
     
     # 避免重复添加handler
     if logger.handlers:
         return logger
     
     # 创建日志目录
-    log_file = Path(Settings.LOG_FILE)
-    log_file.parent.mkdir(parents=True, exist_ok=True)
+    log_file_path = Path(LOG_FILE)
+    log_file_path.parent.mkdir(parents=True, exist_ok=True)
     
     # 文件处理器
-    file_handler = logging.FileHandler(log_file, encoding='utf-8')
+    file_handler = logging.FileHandler(log_file_path, encoding='utf-8')
     file_handler.setLevel(logging.DEBUG)
     file_formatter = logging.Formatter(
         '%(asctime)s.%(msecs)03d - %(name)s - %(levelname)s - %(message)s',

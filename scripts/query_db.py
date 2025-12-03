@@ -10,10 +10,24 @@ def query_project_options():
     """查询项目配置"""
     if not DB_FILE.exists():
         print(f"❌ 数据库文件不存在: {DB_FILE}")
+        print("提示: 请先运行 python3 scripts/init_db.py 初始化数据库")
         return
     
     conn = sqlite3.connect(str(DB_FILE))
     cursor = conn.cursor()
+    
+    # 先检查表是否存在
+    cursor.execute("""
+        SELECT name FROM sqlite_master 
+        WHERE type='table' AND name='project_options'
+    """)
+    table_exists = cursor.fetchone() is not None
+    
+    if not table_exists:
+        print("❌ 数据库表不存在")
+        print("提示: 请先运行 python3 scripts/init_db.py 初始化数据库")
+        conn.close()
+        return
     
     # 检查配置是否存在
     cursor.execute("SELECT COUNT(*) FROM project_options WHERE config_key = 'projects'")

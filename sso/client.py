@@ -28,17 +28,38 @@ class SSOClient:
         Returns:
             代理字典，如果未启用代理则返回 None
         """
-        if not Settings.PROXY_ENABLED:
+        from workflows.models import WorkflowManager
+        proxy_enabled = WorkflowManager.get_app_config("PROXY_ENABLED", "")
+        if not proxy_enabled or proxy_enabled.lower() != "true":
             return None
         
-        proxy_url = Settings.get_proxy_url()
-        if proxy_url:
-            proxies = {
-                "http": proxy_url,
-                "https": proxy_url
-            }
-            logger.debug(f"SSO 客户端已配置代理: {Settings.PROXY_HOST}:{Settings.PROXY_PORT}")
-            return proxies
+        proxy_host = WorkflowManager.get_app_config("PROXY_HOST", "")
+        proxy_port_str = WorkflowManager.get_app_config("PROXY_PORT", "")
+        try:
+            proxy_port = int(proxy_port_str) if proxy_port_str else 0
+        except ValueError:
+            proxy_port = 0
+        
+        if not proxy_host or not proxy_port:
+            return None
+        
+        # 构建代理URL
+        proxy_username = WorkflowManager.get_app_config("PROXY_USERNAME", "")
+        proxy_password = WorkflowManager.get_app_config("PROXY_PASSWORD", "")
+        if proxy_username and proxy_password:
+            from urllib.parse import quote
+            username = quote(proxy_username, safe='')
+            password = quote(proxy_password, safe='')
+            proxy_url = f"http://{username}:{password}@{proxy_host}:{proxy_port}"
+        else:
+            proxy_url = f"http://{proxy_host}:{proxy_port}"
+        
+        proxies = {
+            "http": proxy_url,
+            "https": proxy_url
+        }
+        logger.debug(f"SSO 客户端已配置代理: {proxy_host}:{proxy_port}")
+        return proxies
         
         return None
     

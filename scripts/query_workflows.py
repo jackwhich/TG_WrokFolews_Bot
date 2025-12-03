@@ -15,23 +15,41 @@ def main():
     print("工作流数据查询")
     print("=" * 60)
     
-    # 初始化数据库连接
-    WorkflowManager._get_connection()
-    conn = WorkflowManager._get_connection()
-    cursor = conn.cursor()
-    
-    # 统计信息
-    cursor.execute("SELECT COUNT(*) FROM workflows")
-    total = cursor.fetchone()[0]
-    
-    cursor.execute("SELECT COUNT(*) FROM workflows WHERE status = 'pending'")
-    pending = cursor.fetchone()[0]
-    
-    cursor.execute("SELECT COUNT(*) FROM workflows WHERE status = 'approved'")
-    approved = cursor.fetchone()[0]
-    
-    cursor.execute("SELECT COUNT(*) FROM workflows WHERE status = 'rejected'")
-    rejected = cursor.fetchone()[0]
+    try:
+        # 初始化数据库连接
+        conn = WorkflowManager._get_connection()
+        cursor = conn.cursor()
+        
+        # 先检查表是否存在
+        cursor.execute("""
+            SELECT name FROM sqlite_master 
+            WHERE type='table' AND name='workflows'
+        """)
+        table_exists = cursor.fetchone() is not None
+        
+        if not table_exists:
+            print("❌ 数据库表不存在")
+            print("提示: 请先运行 python3 scripts/init_db.py 初始化数据库")
+            print("\n" + "=" * 60)
+            return
+        
+        # 统计信息
+        cursor.execute("SELECT COUNT(*) FROM workflows")
+        total = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM workflows WHERE status = 'pending'")
+        pending = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM workflows WHERE status = 'approved'")
+        approved = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM workflows WHERE status = 'rejected'")
+        rejected = cursor.fetchone()[0]
+    except Exception as e:
+        print(f"❌ 查询工作流数据时发生错误: {str(e)}")
+        print("提示: 请先运行 python3 scripts/init_db.py 初始化数据库")
+        print("\n" + "=" * 60)
+        return
     
     print(f"\n📊 统计信息:")
     print(f"  - 总工作流数: {total}")

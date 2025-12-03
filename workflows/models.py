@@ -373,7 +373,7 @@ class WorkflowManager:
             return
         
         # 表结构已在 _init_database() 中创建，这里只是标记表已初始化
-        logger.info("✅ 应用配置表已初始化（配置值将从 settings.py 的默认值自动初始化）")
+        logger.info("✅ 应用配置表已初始化（配置值需要通过 scripts/init_db.py 脚本初始化）")
     
     @classmethod
     def initialize(cls, options_file: Path = None):
@@ -383,7 +383,9 @@ class WorkflowManager:
         这个方法会：
         1. 初始化数据库表结构
         2. 从 options.json 文件导入项目配置到数据库
-        3. 初始化应用配置表（配置值从 settings.py 的默认值自动初始化）
+        3. 初始化应用配置表（配置值需要通过 scripts/init_db.py 脚本初始化）
+        
+        注意：此方法已废弃，请使用 scripts/init_db.py 脚本进行初始化
         
         Args:
             options_file: 项目配置文件路径（默认为 config/options.json）

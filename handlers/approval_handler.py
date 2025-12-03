@@ -50,31 +50,41 @@ class ApprovalHandler:
             # 只有"通过"操作需要权限检查，"拒绝"操作所有人都可以执行（相当于取消按钮）
             if action == ACTION_APPROVE:
                 # 如果配置了审批人限制，则验证权限（在 answer 之后检查，因为按钮已经消失了）
-                if Settings.is_approver_restricted():
+                # 检查是否配置了审批人限制（从数据库读取）
+                approver_username_config = WorkflowManager.get_app_config("APPROVER_USERNAME", "")
+                approver_user_id_str = WorkflowManager.get_app_config("APPROVER_USER_ID", "")
+                try:
+                    approver_user_id_config = int(approver_user_id_str) if approver_user_id_str else 0
+                except ValueError:
+                    approver_user_id_config = 0
+                
+                is_restricted = approver_user_id_config != 0 or bool(approver_username_config)
+                
+                if is_restricted:
                     has_permission = False
                     
                     # 优先使用用户名验证（更直观）
-                    if Settings.APPROVER_USERNAME:
+                    if approver_username_config:
                         # 去掉 @ 符号（如果有）
-                        configured_username = Settings.APPROVER_USERNAME.lstrip('@')
+                        configured_username = approver_username_config.lstrip('@')
                         user_username = (query.from_user.username or "").lower()
                         if user_username == configured_username.lower():
                             has_permission = True
                             logger.info(f"审批权限验证通过（通过用户名） - 用户名: {approver_username}")
                     
                     # 如果用户名验证失败，且配置了用户ID，则使用用户ID验证
-                    if not has_permission and Settings.APPROVER_USER_ID != 0:
-                        if approver_id == Settings.APPROVER_USER_ID:
+                    if not has_permission and approver_user_id_config != 0:
+                        if approver_id == approver_user_id_config:
                             has_permission = True
                             logger.info(f"审批权限验证通过（通过用户ID） - 用户ID: {approver_id}")
                     
                     # 如果都没有权限，拒绝审批并显示提示
                     if not has_permission:
                         configured_info = []
-                        if Settings.APPROVER_USERNAME:
-                            configured_info.append(f"用户名: @{Settings.APPROVER_USERNAME}")
-                        if Settings.APPROVER_USER_ID != 0:
-                            configured_info.append(f"用户ID: {Settings.APPROVER_USER_ID}")
+                        if approver_username_config:
+                            configured_info.append(f"用户名: @{approver_username_config}")
+                        if approver_user_id_config != 0:
+                            configured_info.append(f"用户ID: {approver_user_id_config}")
                         logger.warning(
                             f"用户 {approver_id} ({approver_username}) 尝试审批但无权限，"
                             f"配置的审批人: {', '.join(configured_info)}"

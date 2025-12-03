@@ -17,15 +17,31 @@ def main():
     print("=" * 50)
     
     # 初始化数据库连接
-    WorkflowManager._get_connection()
-    
-    # 查询配置
-    conn = WorkflowManager._get_connection()
-    cursor = conn.cursor()
-    
-    # 检查配置是否存在
-    cursor.execute("SELECT COUNT(*) FROM project_options WHERE config_key = 'projects'")
-    count = cursor.fetchone()[0]
+    try:
+        conn = WorkflowManager._get_connection()
+        cursor = conn.cursor()
+        
+        # 先检查表是否存在
+        cursor.execute("""
+            SELECT name FROM sqlite_master 
+            WHERE type='table' AND name='project_options'
+        """)
+        table_exists = cursor.fetchone() is not None
+        
+        if not table_exists:
+            print("❌ 数据库表不存在")
+            print("提示: 请先运行 python3 scripts/init_db.py 初始化数据库")
+            print("\n" + "=" * 50)
+            return
+        
+        # 检查配置是否存在
+        cursor.execute("SELECT COUNT(*) FROM project_options WHERE config_key = 'projects'")
+        count = cursor.fetchone()[0]
+    except Exception as e:
+        print(f"❌ 检查配置时发生错误: {str(e)}")
+        print("提示: 请先运行 python3 scripts/init_db.py 初始化数据库")
+        print("\n" + "=" * 50)
+        return
     
     if count > 0:
         print(f"✅ 配置已存在于数据库中（共 {count} 条记录）")
@@ -63,7 +79,7 @@ def main():
                 print(f"原始内容: {config_value[:200]}...")
     else:
         print("❌ 配置不存在于数据库中")
-        print("提示: 运行 Bot 启动时会自动从 config/options.json 导入配置")
+        print("提示: 请运行 python3 scripts/init_db.py 初始化数据库配置")
     
     print("\n" + "=" * 50)
 

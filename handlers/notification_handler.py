@@ -53,7 +53,8 @@ class NotificationHandler:
             
             # 格式化消息（使用配置的审批人用户名，或默认值）
             # 去掉 @ 符号（如果有），因为消息模板中已经包含了 @
-            approver_username = Settings.APPROVER_USERNAME or "审批人"
+            from workflows.models import WorkflowManager
+            approver_username = WorkflowManager.get_app_config("APPROVER_USERNAME", "") or "审批人"
             approver_username = approver_username.lstrip('@')  # 去掉开头的 @ 符号
             message_text = format_workflow_message(
                 workflow_data,
@@ -123,7 +124,8 @@ class NotificationHandler:
             workflow_id = workflow_data.get('workflow_id', 'N/A')
             
             # 使用实际审批人信息（自动捕获的）
-            approver_username = workflow_data.get('approver_username', Settings.APPROVER_USERNAME or '审批人')
+            from workflows.models import WorkflowManager
+            approver_username = workflow_data.get('approver_username', WorkflowManager.get_app_config("APPROVER_USERNAME", "") or '审批人')
             
             # 格式化审批结果消息
             message_text = format_approval_result(

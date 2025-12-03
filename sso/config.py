@@ -12,22 +12,27 @@ class SSOConfig:
     @classmethod
     def is_enabled(cls) -> bool:
         """检查是否启用 SSO 集成"""
-        return Settings.get_sso_enabled()
+        from workflows.models import WorkflowManager
+        value = WorkflowManager.get_app_config("SSO_ENABLED", "")
+        return value.lower() == "true" if value else False
     
     @classmethod
     def get_url(cls) -> str:
         """获取 SSO 系统 URL"""
-        return Settings.get_sso_url()
+        from workflows.models import WorkflowManager
+        return WorkflowManager.get_app_config("SSO_URL", "")
     
     @classmethod
     def get_auth_token(cls) -> str:
         """获取 SSO Auth Token"""
-        return Settings.get_sso_auth_token()
+        from workflows.models import WorkflowManager
+        return WorkflowManager.get_app_config("SSO_AUTH_TOKEN", "")
     
     @classmethod
     def get_authorization(cls) -> str:
         """获取 SSO Authorization"""
-        return Settings.get_sso_authorization()
+        from workflows.models import WorkflowManager
+        return WorkflowManager.get_app_config("SSO_AUTHORIZATION", "")
     
     @classmethod
     def get_headers(cls) -> dict:

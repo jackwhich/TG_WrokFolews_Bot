@@ -74,20 +74,18 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     """主函数"""
-    # 先初始化数据库并导入配置（从 options.json）
+    # 从数据库加载配置到 Settings（不进行初始化）
+    # 注意：数据库初始化需要通过 scripts/init_db.py 手动执行
     try:
-        from pathlib import Path
-        # 首次启动时，从 options.json 导入配置到数据库
-        options_file = Path("config/options.json")
-        WorkflowManager.initialize(options_file=options_file)
-        logger.info("✅ 工作流管理器初始化成功（SQLite数据库 + 配置）")
+        # 确保数据库连接可用（但不初始化表结构）
+        WorkflowManager._get_connection()
         
         # 从数据库加载配置到 Settings
         Settings.load_from_db()
         logger.info("✅ 配置已从数据库加载到 Settings")
     except Exception as e:
-        logger.error(f"❌ 工作流管理器初始化失败: {str(e)}", exc_info=True)
-        logger.warning("请检查 config/options.json 文件是否存在")
+        logger.error(f"❌ 从数据库加载配置失败: {str(e)}", exc_info=True)
+        logger.error("请先运行初始化脚本: python3 scripts/init_db.py")
         return
     
     # 验证配置（在从数据库加载后）
@@ -95,7 +93,7 @@ def main():
         Settings.validate()
     except ValueError as e:
         logger.error(f"配置验证失败: {e}")
-        logger.warning("请检查数据库中的配置项（首次启动时会从 settings.py 的默认值自动初始化）")
+        logger.warning("请检查数据库中的配置项，如需初始化或更新配置，请运行: python3 scripts/init_db.py")
         return
     
     # 创建优化的 HTTP 请求客户端（使用连接池和长连接）
@@ -110,19 +108,46 @@ def main():
     }
     
     # 如果启用了代理，添加代理配置
-    proxy_url = Settings.get_proxy_url()
+    proxy_enabled = WorkflowManager.get_app_config("PROXY_ENABLED", "")
+    proxy_url = None
+    if proxy_enabled and proxy_enabled.lower() == "true":
+        proxy_host = WorkflowManager.get_app_config("PROXY_HOST", "")
+        proxy_port_str = WorkflowManager.get_app_config("PROXY_PORT", "")
+        try:
+            proxy_port = int(proxy_port_str) if proxy_port_str else 0
+        except ValueError:
+            proxy_port = 0
+        
+        if proxy_host and proxy_port:
+            proxy_username = WorkflowManager.get_app_config("PROXY_USERNAME", "")
+            proxy_password = WorkflowManager.get_app_config("PROXY_PASSWORD", "")
+            if proxy_username and proxy_password:
+                from urllib.parse import quote
+                username = quote(proxy_username, safe='')
+                password = quote(proxy_password, safe='')
+                proxy_url = f"http://{username}:{password}@{proxy_host}:{proxy_port}"
+            else:
+                proxy_url = f"http://{proxy_host}:{proxy_port}"
+    
     if proxy_url:
         request_kwargs["proxy_url"] = proxy_url
-        logger.info(f"✅ 已配置代理: {Settings.PROXY_HOST}:{Settings.PROXY_PORT}")
+        logger.info(f"✅ 已配置代理: {proxy_host}:{proxy_port}")
     else:
         logger.info("ℹ️ 未启用代理")
     
     request = HTTPXRequest(**request_kwargs)
     
     # 创建应用（使用优化的请求客户端）
-    application = Application.builder().token(Settings.BOT_TOKEN).request(request).build()
+    bot_token = WorkflowManager.get_app_config("BOT_TOKEN", "")
+    application = Application.builder().token(bot_token).request(request).build()
     
-    proxy_info = f", 代理: {Settings.PROXY_HOST}:{Settings.PROXY_PORT}" if Settings.PROXY_ENABLED else ""
+    proxy_enabled = WorkflowManager.get_app_config("PROXY_ENABLED", "")
+    proxy_info = ""
+    if proxy_enabled and proxy_enabled.lower() == "true":
+        proxy_host = WorkflowManager.get_app_config("PROXY_HOST", "")
+        proxy_port = WorkflowManager.get_app_config("PROXY_PORT", "")
+        if proxy_host and proxy_port:
+            proxy_info = f", 代理: {proxy_host}:{proxy_port}"
     logger.info(
         f"✅ Bot应用已创建（连接池优化 - 连接池大小: {Settings.CONNECTION_POOL_SIZE}, "
         f"读取超时: {Settings.HTTP_READ_TIMEOUT}s, 写入超时: {Settings.HTTP_WRITE_TIMEOUT}s, "
