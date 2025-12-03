@@ -228,24 +228,17 @@ class FormHandler:
         # 获取已选择的服务
         selected_services = context.user_data['form_data'].get('services', [])
         
+        # 优化：每行只显示1个按钮，确保长服务名称可以完整显示
         keyboard = []
-        for i in range(0, len(services), 2):
-            row = []
-            service1 = services[i]
+        for service in services:
             # 如果已选择，显示 ✓ 标记
-            btn1_text = f"✓ {service1}" if service1 in selected_services else service1
-            row.append(InlineKeyboardButton(
-                btn1_text,
-                callback_data=f"{ACTION_SELECT_SERVICE}:{service1}"
-            ))
-            if i + 1 < len(services):
-                service2 = services[i + 1]
-                btn2_text = f"✓ {service2}" if service2 in selected_services else service2
-                row.append(InlineKeyboardButton(
-                    btn2_text,
-                    callback_data=f"{ACTION_SELECT_SERVICE}:{service2}"
-                ))
-            keyboard.append(row)
+            btn_text = f"✓ {service}" if service in selected_services else service
+            keyboard.append([
+                InlineKeyboardButton(
+                    btn_text,
+                    callback_data=f"{ACTION_SELECT_SERVICE}:{service}"
+                )
+            ])
         
         # 添加"完成选择"按钮
         keyboard.append([

@@ -273,7 +273,7 @@ class ApprovalHandler:
             logger.info(f"📋 检查 SSO 是否启用...")
             if not SSOConfig.is_enabled():
                 logger.warning(f"⚠️ SSO 集成未启用，跳过 SSO 提交 - 工作流ID: {workflow_id}")
-                logger.info(f"💡 提示：请在 config/settings.py 中设置 DEFAULT_SSO_ENABLED = True，并配置 SSO_AUTH_TOKEN 和 SSO_AUTHORIZATION")
+                logger.info(f"💡 提示：如需启用 SSO 集成，请修改 scripts/init_db.py 中的 DEFAULT_SSO_ENABLED = True，并配置 SSO_AUTH_TOKEN 和 SSO_AUTHORIZATION，然后运行 python3 scripts/init_db.py 更新数据库配置")
                 return
             
             logger.info(f"✅ SSO 集成已启用")

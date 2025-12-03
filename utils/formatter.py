@@ -32,7 +32,13 @@ def format_approval_result(workflow_data: dict, approver_username: str) -> str:
     status = workflow_data.get("status", STATUS_PENDING)
     
     if status == STATUS_APPROVED:
-        return WORKFLOW_APPROVED_TEMPLATE.format(
+        # 移除 "正在提交到 SSO 系统" 这一行（无论 SSO 是否启用都不显示）
+        template = WORKFLOW_APPROVED_TEMPLATE.replace(
+            "\n━━━━━━━━━━━━━━━━━━━━\n🚀 正在提交到 SSO 系统\n━━━━━━━━━━━━━━━━━━━━",
+            ""
+        )
+        
+        return template.format(
             workflow_id=workflow_data.get("workflow_id", "N/A"),
             username=workflow_data.get("username", "N/A"),
             approver_username=approver_username,

@@ -71,7 +71,7 @@ WORKFLOW_APPROVED_TEMPLATE = """━━━━━━━━━━━━━━━━
 {submission_data}
 
 ━━━━━━━━━━━━━━━━━━━━
-🚀 正在提交到 SSO 系统...
+🚀 正在提交到 SSO 系统
 ━━━━━━━━━━━━━━━━━━━━"""
 
 WORKFLOW_REJECTED_TEMPLATE = """━━━━━━━━━━━━━━━━━━━━

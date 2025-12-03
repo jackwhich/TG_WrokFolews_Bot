@@ -229,8 +229,14 @@ class WorkflowManager:
         logger.info("✅ 数据库表结构和索引初始化完成（包含单列索引和复合索引，以及 SSO 相关表）")
     
     @classmethod
-    def _init_project_options(cls, options_file: Path = None):
-        """初始化项目配置选项（从 JSON 文件导入到数据库）"""
+    def _init_project_options(cls, options_file: Path = None, force_update: bool = False):
+        """
+        初始化项目配置选项（从 JSON 文件导入到数据库）
+        
+        Args:
+            options_file: 配置文件路径
+            force_update: 是否强制更新（即使数据库中已有配置也更新）
+        """
         conn = cls._get_connection()
         cursor = conn.cursor()
         
@@ -238,7 +244,7 @@ class WorkflowManager:
         cursor.execute("SELECT COUNT(*) FROM project_options WHERE config_key = 'projects'")
         count = cursor.fetchone()[0]
         
-        if count > 0:
+        if count > 0 and not force_update:
             logger.info("项目配置已存在于数据库中，跳过初始化")
             return
         
@@ -258,7 +264,7 @@ class WorkflowManager:
             logger.error(f"读取项目配置文件失败: {str(e)}", exc_info=True)
             raise
         
-        # 将配置存储到数据库
+        # 将配置存储到数据库（使用 INSERT OR REPLACE 确保更新）
         timestamp = int(time.time())
         cursor.execute("""
             INSERT OR REPLACE INTO project_options (config_key, config_value, updated_at)
@@ -266,7 +272,10 @@ class WorkflowManager:
         """, ("projects", json.dumps(options_data, ensure_ascii=False), timestamp))
         
         conn.commit()
-        logger.info("✅ 项目配置已初始化到数据库")
+        if force_update:
+            logger.info("✅ 项目配置已更新到数据库")
+        else:
+            logger.info("✅ 项目配置已初始化到数据库")
     
     @classmethod
     def get_project_options(cls) -> Dict:
