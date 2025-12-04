@@ -33,7 +33,7 @@ logs/
 # 数据文件
 data/
 *.json
-!scripts/options.json
+scripts/options.json
 
 # IDE
 .vscode/
