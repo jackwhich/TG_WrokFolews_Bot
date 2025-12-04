@@ -51,17 +51,22 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def deploy_build_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """处理 /deploy_build 命令（表单提交）"""
-    logger.info(f"收到 /deploy_build 命令，用户: {update.effective_user.id}")
-    try:
-        result = await FormHandler.start_form(update, context)
-        logger.info(f"/deploy_build 命令处理完成，返回状态: {result}")
-        return result
-    except Exception as e:
-        logger.error(f"处理 /deploy_build 命令时发生错误: {str(e)}", exc_info=True)
-        await update.message.reply_text(f"❌ 处理命令失败: {str(e)}")
-        return ConversationHandler.END
+def create_deploy_command_handler(project_name: str):
+    """创建部署命令处理器（为每个项目生成独立的处理器）"""
+    async def deploy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理部署命令（表单提交）"""
+        logger.info(f"收到项目 {project_name} 的部署命令，用户: {update.effective_user.id}")
+        try:
+            # 将项目名称存储到 context 中，供表单处理器使用
+            context.user_data['project_name'] = project_name
+            result = await FormHandler.start_form(update, context, project_name=project_name)
+            logger.info(f"项目 {project_name} 的部署命令处理完成，返回状态: {result}")
+            return result
+        except Exception as e:
+            logger.error(f"处理项目 {project_name} 的部署命令时发生错误: {str(e)}", exc_info=True)
+            await update.message.reply_text(f"❌ 处理命令失败: {str(e)}")
+            return ConversationHandler.END
+    return deploy_command
 
 
 async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -73,46 +78,68 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def setup_handlers(application):
     """设置所有处理器"""
     
-    # 表单提交对话处理器（deploy_build，固定命令）
-    # 混合使用 CallbackQueryHandler 和 MessageHandler 时，使用默认的 per_message=False
-    # 这是推荐配置，功能正常（警告已在模块级别抑制）
-    form_conv = ConversationHandler(
-        entry_points=[CommandHandler("deploy_build", deploy_build_command)],
-        states={
-            SELECTING_PROJECT: [
-                CallbackQueryHandler(FormHandler.handle_project_selection, pattern=f"^{ACTION_SELECT_PROJECT}:")
-            ],
-            SELECTING_ENVIRONMENT: [
-                CallbackQueryHandler(FormHandler.handle_environment_selection, pattern=f"^{ACTION_SELECT_ENV}:")
-            ],
-            SELECTING_SERVICE: [
-                CallbackQueryHandler(
-                    FormHandler.handle_service_selection, 
-                    pattern=f"^{ACTION_SELECT_SERVICE}:|^{ACTION_CONFIRM_SERVICE_SELECTION}"
-                )
-            ],
-            INPUTTING_HASH: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, FormHandler.handle_hash_input)
-            ],
-            INPUTTING_BRANCH: [
-                CallbackQueryHandler(FormHandler.handle_branch_input, pattern="^branch:"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, FormHandler.handle_branch_input)
-            ],
-            INPUTTING_CONTENT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, FormHandler.handle_content_input)
-            ],
-            CONFIRMING_FORM: [
-                CallbackQueryHandler(FormHandler.handle_confirmation, pattern=f"^{ACTION_CONFIRM_FORM}|^{ACTION_CANCEL_FORM}")
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel_command)],
-        # 使用默认设置：per_chat=True, per_user=True, per_message=False
-        # 这是混合使用 CallbackQueryHandler 和 MessageHandler 时的推荐配置
-    )
+    # 从数据库加载项目配置，动态注册每个项目的命令
+    from workflows.models import WorkflowManager
+    options = WorkflowManager.get_project_options()
+    projects = options.get("projects", {})
     
-    # 注册处理器
+    # 为每个项目创建独立的命令处理器
+    registered_commands = []
+    for project_name, project_data in projects.items():
+        command = project_data.get("command")
+        if not command:
+            logger.warning(f"项目 {project_name} 未配置 command 字段，跳过注册")
+            continue
+        
+        # 移除命令前缀的斜杠（如果有）
+        command = command.lstrip("/")
+        
+        # 创建该项目的命令处理器
+        command_handler = create_deploy_command_handler(project_name)
+        
+        # 创建表单对话处理器
+        form_conv = ConversationHandler(
+            entry_points=[CommandHandler(command, command_handler)],
+            states={
+                SELECTING_PROJECT: [
+                    CallbackQueryHandler(FormHandler.handle_project_selection, pattern=f"^{ACTION_SELECT_PROJECT}:")
+                ],
+                SELECTING_ENVIRONMENT: [
+                    CallbackQueryHandler(FormHandler.handle_environment_selection, pattern=f"^{ACTION_SELECT_ENV}:")
+                ],
+                SELECTING_SERVICE: [
+                    CallbackQueryHandler(
+                        FormHandler.handle_service_selection, 
+                        pattern=f"^{ACTION_SELECT_SERVICE}:|^{ACTION_CONFIRM_SERVICE_SELECTION}"
+                    )
+                ],
+                INPUTTING_HASH: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, FormHandler.handle_hash_input)
+                ],
+                INPUTTING_BRANCH: [
+                    CallbackQueryHandler(FormHandler.handle_branch_input, pattern="^branch:"),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, FormHandler.handle_branch_input)
+                ],
+                INPUTTING_CONTENT: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, FormHandler.handle_content_input)
+                ],
+                CONFIRMING_FORM: [
+                    CallbackQueryHandler(FormHandler.handle_confirmation, pattern=f"^{ACTION_CONFIRM_FORM}|^{ACTION_CANCEL_FORM}")
+                ],
+            },
+            fallbacks=[CommandHandler("cancel", cancel_command)],
+            # 使用默认设置：per_chat=True, per_user=True, per_message=False
+            # 这是混合使用 CallbackQueryHandler 和 MessageHandler 时的推荐配置
+        )
+        
+        # 注册该项目的命令处理器
+        application.add_handler(form_conv)
+        registered_commands.append(f"/{command} ({project_name})")
+        logger.info(f"✅ 已注册项目 {project_name} 的命令: /{command}")
+    
+    # 注册基础命令
     application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(form_conv)  # deploy_build 表单处理器
+    
     # 审批回调处理器
     application.add_handler(
         CallbackQueryHandler(
@@ -121,5 +148,5 @@ def setup_handlers(application):
         )
     )
     
-    logger.info("所有处理器已注册，表单命令: /deploy_build")
+    logger.info(f"✅ 所有处理器已注册，共注册 {len(registered_commands)} 个项目命令: {', '.join(registered_commands)}")
 

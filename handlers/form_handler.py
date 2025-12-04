@@ -61,21 +61,43 @@ class FormHandler:
         )
     
     @staticmethod
-    async def start_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def start_form(update: Update, context: ContextTypes.DEFAULT_TYPE, project_name: str = None):
         """开始表单流程"""
         try:
-            logger.info(f"收到 /deploy_build 命令，用户ID: {update.effective_user.id}")
+            # 如果从命令中指定了项目，使用指定的项目；否则从 context 中获取
+            if project_name is None:
+                project_name = context.user_data.get('project_name')
+            
+            logger.info(f"收到部署命令，用户ID: {update.effective_user.id}, 项目: {project_name or '未指定'}")
             
             # 初始化表单数据
             form_data = FormHandler._init_form_data(context)
             apply_time = form_data['apply_time']
             
-            logger.info(f"用户 {update.effective_user.id} 开始填写表单，申请时间: {apply_time}")
-            
-            # 显示项目选择界面
-            result = await FormHandler.show_project_selection(update, context, None)
-            logger.debug(f"命令处理完成，返回状态: {result}")
-            return result
+            # 如果命令中指定了项目，直接设置项目并跳过项目选择
+            if project_name:
+                # 验证项目是否存在
+                projects = await asyncio.to_thread(Settings.get_projects)
+                if project_name not in projects:
+                    error_msg = f"❌ 项目 {project_name} 不存在，请联系管理员"
+                    await update.message.reply_text(error_msg)
+                    logger.error(f"项目 {project_name} 不存在")
+                    return ConversationHandler.END
+                
+                # 设置项目
+                form_data['project'] = project_name
+                logger.info(f"用户 {update.effective_user.id} 通过命令指定项目: {project_name}，申请时间: {apply_time}")
+                
+                # 直接显示环境选择界面（跳过项目选择）
+                result = await FormHandler.show_environment_selection(update, context)
+                logger.debug(f"命令处理完成，返回状态: {result}")
+                return result
+            else:
+                # 未指定项目，显示项目选择界面
+                logger.info(f"用户 {update.effective_user.id} 开始填写表单，申请时间: {apply_time}")
+                result = await FormHandler.show_project_selection(update, context, None)
+                logger.debug(f"命令处理完成，返回状态: {result}")
+                return result
         except Exception as e:
             logger.error(f"启动表单流程时发生错误: {str(e)}", exc_info=True)
             await update.message.reply_text(f"❌ 启动表单失败: {str(e)}")
@@ -185,7 +207,8 @@ class FormHandler:
                  f"✅ 申请项目: {form_data['project']}\n" \
                  f"⏳ 申请环境: 请选择"
         
-        await update.callback_query.edit_message_text(message, reply_markup=reply_markup)
+        # 使用 reply_or_edit 以支持 callback_query 和 message 两种情况
+        await reply_or_edit(update, message, reply_markup=reply_markup)
         
         return SELECTING_ENVIRONMENT
     

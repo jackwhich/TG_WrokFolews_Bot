@@ -167,14 +167,36 @@ def main():
     
     # 注册Bot命令列表（让用户在输入 / 时看到命令）
     async def register_commands(application: Application) -> None:
-        """注册Bot命令列表"""
+        """注册Bot命令列表（从数据库动态读取项目配置）"""
+        # 基础命令
         commands = [
             BotCommand("start", "开始使用Bot"),
-            BotCommand("deploy_build", "申请测试环境服务发版"),
             BotCommand("cancel", "取消当前操作"),
         ]
         
+        # 从数据库加载项目配置，为每个项目添加命令
         try:
+            options = WorkflowManager.get_project_options()
+            projects = options.get("projects", {})
+            
+            for project_name, project_data in projects.items():
+                command = project_data.get("command")
+                if not command:
+                    continue
+                
+                # 移除命令前缀的斜杠（如果有）
+                command = command.lstrip("/")
+                
+                # 从配置中读取命令描述，如果没有则使用默认值
+                description = project_data.get("command_description")
+                if not description:
+                    # 如果没有配置描述，使用默认格式
+                    description = f"申请{project_name}项目发版"
+                
+                commands.append(BotCommand(command, description))
+                logger.debug(f"添加项目命令: /{command} - {description}")
+            
+            # 注册命令列表
             await application.bot.set_my_commands(commands)
             logger.info(f"✅ Bot命令列表已注册: {[cmd.command for cmd in commands]}")
         except Exception as e:
