@@ -72,9 +72,19 @@ class JenkinsMonitor:
                     )
                     
                     if not build_info:
-                        # 查询失败，等待后重试
-                        if attempt % 5 == 0:  # 每5次尝试输出一次警告
-                            logger.warning(f"⚠️ 未获取到构建信息 - Job: {job_name}, Build: #{build_number}, 尝试: {attempt + 1}/{max_poll_count}")
+                        # 构建信息不存在，可能还在队列中等待或构建尚未开始，继续查询
+                        if attempt % 10 == 0:  # 每10次尝试输出一次日志（减少日志噪音）
+                            logger.info(f"⏳ 构建 #{build_number} 仍在队列中等待或尚未开始... - Job: {job_name}, 已等待: {(attempt + 1) * poll_interval}秒")
+                        
+                        # 更新数据库状态为队列中（如果 build_id 存在）
+                        if build_id:
+                            await asyncio.to_thread(
+                                self._update_build_status,
+                                build_id=build_id,
+                                build_info=None,
+                                build_status='QUEUED'
+                            )
+                        
                         await asyncio.sleep(poll_interval)
                         continue
                     

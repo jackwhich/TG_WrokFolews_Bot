@@ -170,40 +170,7 @@ class ApprovalHandler:
                     
                     logger.info(f"工作流状态已更新 - ID: {workflow_id}, 新状态: {updated_workflow.get('status')}")
                     
-                    # 同步到外部API（如果配置了）- 使用线程池执行同步HTTP请求，避免阻塞事件循环
-                    if Settings.is_api_enabled():
-                        logger.info(f"开始同步工作流 {workflow_id} 到外部API...")
-                        try:
-                            # 使用 asyncio.to_thread 在线程池中执行同步的API调用，不阻塞事件循环
-                            sync_success, sync_error = await asyncio.to_thread(
-                                sync_workflow_to_api, updated_workflow
-                            )
-                            if sync_success:
-                                logger.info(f"✅ 工作流 {workflow_id} 已成功同步到外部API，外部系统已收到审批结果")
-                            else:
-                                logger.error(f"❌ 工作流 {workflow_id} API同步失败: {sync_error}")
-                                # 即使API同步失败，也继续处理审批结果（Telegram内已完成）
-                        except Exception as e:
-                            logger.error(f"❌ 同步到外部API时发生异常 - 工作流ID: {workflow_id}, 错误: {str(e)}", exc_info=True)
-                    else:
-                        logger.info(f"⚠️ 工作流 {workflow_id} 未配置外部API，仅完成Telegram内审批流程")
-                    
-                    # SSO 提交（仅在审批通过时执行）
-                    if action == ACTION_APPROVE:
-                        await ApprovalHandler._submit_to_sso(
-                            context=context,
-                            workflow_data=updated_workflow,
-                            approver_username=approver_username
-                        )
-                    
-                        # Jenkins 构建触发（仅在审批通过时执行）
-                        await ApprovalHandler._trigger_jenkins_build(
-                            context=context,
-                            workflow_data=updated_workflow,
-                            approver_username=approver_username
-                        )
-                    
-                    # 更新群组消息（会自动更新所有群组的消息）
+                    # 立即更新群组消息，显示审批结果（不等待 SSO 和 Jenkins）
                     logger.info(f"正在更新群组消息 - 工作流ID: {workflow_id}")
                     group_messages = updated_workflow.get("group_messages", {})
                     if group_messages:
@@ -213,6 +180,7 @@ class ApprovalHandler:
                                 context=context,
                                 workflow_data=updated_workflow,
                             )
+                            logger.info(f"✅ 群组消息已更新 - 工作流ID: {workflow_id}")
                         except Exception as e:
                             logger.error(f"更新群组消息失败 - 工作流ID: {workflow_id}, 错误: {str(e)}", exc_info=True)
                     else:
@@ -231,6 +199,49 @@ class ApprovalHandler:
                         f"✅ 审批流程完成 - 工作流ID: {workflow_id}, 审批人: {approver_username} ({approver_id}), "
                         f"动作: {'通过' if action == ACTION_APPROVE else '拒绝'}"
                     )
+                    
+                    # 以下操作在后台异步执行，不阻塞审批流程完成
+                    # 同步到外部API（如果配置了）- 使用线程池执行同步HTTP请求，避免阻塞事件循环
+                    async def _sync_to_api():
+                        if Settings.is_api_enabled():
+                            logger.info(f"开始同步工作流 {workflow_id} 到外部API...")
+                            try:
+                                # 使用 asyncio.to_thread 在线程池中执行同步的API调用，不阻塞事件循环
+                                sync_success, sync_error = await asyncio.to_thread(
+                                    sync_workflow_to_api, updated_workflow
+                                )
+                                if sync_success:
+                                    logger.info(f"✅ 工作流 {workflow_id} 已成功同步到外部API，外部系统已收到审批结果")
+                                else:
+                                    logger.error(f"❌ 工作流 {workflow_id} API同步失败: {sync_error}")
+                                    # 即使API同步失败，也继续处理审批结果（Telegram内已完成）
+                            except Exception as e:
+                                logger.error(f"❌ 同步到外部API时发生异常 - 工作流ID: {workflow_id}, 错误: {str(e)}", exc_info=True)
+                        else:
+                            logger.info(f"⚠️ 工作流 {workflow_id} 未配置外部API，仅完成Telegram内审批流程")
+                    
+                    # SSO 提交（仅在审批通过时执行，后台异步）
+                    async def _submit_to_sso_async():
+                        if action == ACTION_APPROVE:
+                            await ApprovalHandler._submit_to_sso(
+                                context=context,
+                                workflow_data=updated_workflow,
+                                approver_username=approver_username
+                            )
+                    
+                    # Jenkins 构建触发（仅在审批通过时执行，后台异步）
+                    async def _trigger_jenkins_async():
+                        if action == ACTION_APPROVE:
+                            await ApprovalHandler._trigger_jenkins_build(
+                                context=context,
+                                workflow_data=updated_workflow,
+                                approver_username=approver_username
+                            )
+                    
+                    # 在后台异步执行这些操作，不阻塞审批流程完成
+                    asyncio.create_task(_sync_to_api())
+                    asyncio.create_task(_submit_to_sso_async())
+                    asyncio.create_task(_trigger_jenkins_async())
                 except Exception as e:
                     logger.error(f"后台审批处理失败 - 工作流ID: {workflow_id}, 错误: {str(e)}", exc_info=True)
                     try:
@@ -644,18 +655,23 @@ class ApprovalHandler:
                 next_build_number = build_result.get('next_build_number')
                 logger.info(f"✅ Jenkins 构建已触发 - Job: {job_name}, Queue ID: {queue_id}, 下一个构建号: {next_build_number}")
                 
-                # 等待构建开始并获取构建编号
+                # 等待构建开始并获取构建编号（增加超时时间，因为可能需要等待队列）
                 if queue_id or next_build_number:
                     build_number = await asyncio.to_thread(
                         jenkins_client.wait_for_build_to_start,
                         job_name=job_name,
                         queue_id=queue_id,
                         next_build_number=next_build_number,
-                        timeout=60
+                        timeout=300  # 增加到 5 分钟，因为 Jenkins Job 可能在队列中等待
                     )
                     
+                    # 如果等待超时，使用预期的构建号启动监控（监控任务会处理构建还在队列中的情况）
+                    if not build_number and next_build_number:
+                        logger.info(f"⏳ 等待队列超时，将使用预期的构建号 {next_build_number} 启动监控（监控任务会持续查询直到构建开始）")
+                        build_number = next_build_number
+                    
                     if build_number:
-                        logger.info(f"✅ 构建已开始 - Job: {job_name}, Build: #{build_number}")
+                        logger.info(f"✅ 构建已开始或使用构建号: {job_name}, Build: #{build_number}")
                         
                         # 创建构建记录
                         build_record = await asyncio.to_thread(
@@ -668,7 +684,6 @@ class ApprovalHandler:
                             build_parameters=build_parameters
                         )
                         
-                        # 不发送构建开始通知，只等待构建完成后发送结果通知
                         # 启动构建状态监控任务（在后台运行，不阻塞）
                         logger.info(f"🔍 启动构建状态监控任务...")
                         asyncio.create_task(
@@ -681,7 +696,7 @@ class ApprovalHandler:
                         )
                         logger.info(f"✅ 已启动构建监控任务（后台运行）")
                     else:
-                        logger.warning(f"⚠️ 等待构建开始超时 - Job: {job_name}, Queue ID: {queue_id}")
+                        logger.error(f"❌ 无法获取构建编号 - Job: {job_name}, Queue ID: {queue_id}, Next Build: {next_build_number}")
                 else:
                     logger.warning(f"⚠️ 未获取到 Queue ID - Job: {job_name}")
             
