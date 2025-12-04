@@ -493,10 +493,10 @@ class ApprovalHandler:
             approver_username: 审批人用户名
         """
         import asyncio
-        from jenkins.config import JenkinsConfig
-        from jenkins.client import JenkinsClient
-        from jenkins.monitor import JenkinsMonitor
-        from jenkins.notifier import JenkinsNotifier
+        from jenkins_ops.config import JenkinsConfig
+        from jenkins_ops.client import JenkinsClient
+        from jenkins_ops.monitor import JenkinsMonitor
+        from jenkins_ops.notifier import JenkinsNotifier
         from sso.data_converter import parse_tg_submission_data
         
         workflow_id = workflow_data.get('workflow_id')

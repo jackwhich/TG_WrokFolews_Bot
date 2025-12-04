@@ -2,8 +2,8 @@
 import asyncio
 import time
 from typing import Dict, Optional
-from jenkins.client import JenkinsClient
-from jenkins.notifier import JenkinsNotifier
+from jenkins_ops.client import JenkinsClient
+from jenkins_ops.notifier import JenkinsNotifier
 from workflows.models import WorkflowManager
 from utils.logger import setup_logger
 
