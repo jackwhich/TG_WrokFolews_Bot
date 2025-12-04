@@ -9,7 +9,6 @@ if str(project_root) not in sys.path:
 
 from telegram import Update, BotCommand
 from telegram.ext import Application, ContextTypes
-from telegram.request import HTTPXRequest
 from telegram.error import NetworkError, TimedOut, RetryAfter
 from config.settings import Settings
 from utils.logger import setup_logger
@@ -17,6 +16,13 @@ from bot.handlers import setup_handlers
 from workflows.models import WorkflowManager
 
 logger = setup_logger(__name__)
+
+# 重要：在导入 HTTPXRequest 之前，先导入 httpx
+# 这样可以确保如果 httpx-socks 已安装，SOCKS5 支持会被正确注册
+# 必须在导入 telegram.request 之前完成，因为 HTTPXRequest 内部会使用 httpx
+import httpx
+# HTTPXRequest 延迟导入，在 main() 函数中需要时再导入
+# 这样可以确保 httpx 已经导入，httpx-socks 支持已注册
 
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -107,20 +113,34 @@ def main():
         "http_version": "1.1"                                   # 使用 HTTP/1.1（Telegram API 支持）
     }
     
-    # 如果启用了代理，添加代理配置
-    from utils.proxy import get_proxy_url
-    proxy_url = get_proxy_url()
-    if proxy_url:
-        request_kwargs["proxy_url"] = proxy_url
-        logger.info("✅ 已配置代理")
+    # 获取代理配置（封装在 proxy.py 中，返回可直接用于 HTTPXRequest 的代理对象）
+    from utils.proxy import get_proxy_for_httpx, get_proxy_url
+    proxy = get_proxy_for_httpx()
+    
+    if proxy:
+        request_kwargs["proxy"] = proxy
+        # 获取代理 URL 用于日志显示
+        proxy_url = get_proxy_url()
+        logger.info(f"✅ 已配置代理: {proxy_url.split('@')[-1] if '@' in proxy_url else proxy_url}")
+        if proxy_url and proxy_url.startswith("socks5h://"):
+            logger.info("   ℹ️ 使用 socks5h:// 协议（DNS 解析通过代理服务器）")
     else:
         logger.info("ℹ️ 未启用代理")
     
+    # 延迟导入 HTTPXRequest，确保 httpx 已经导入（httpx-socks 支持已注册）
+    from telegram.request import HTTPXRequest
     request = HTTPXRequest(**request_kwargs)
     
     # 创建应用（使用优化的请求客户端）
+    # 注意：需要同时设置 request 和 get_updates_request，确保普通请求和轮询更新都使用代理
     bot_token = WorkflowManager.get_app_config("BOT_TOKEN", "")
-    application = Application.builder().token(bot_token).request(request).build()
+    application = (
+        Application.builder()
+        .token(bot_token)
+        .request(request)
+        .get_updates_request(request)
+        .build()
+    )
     
     proxy_enabled = WorkflowManager.get_app_config("PROXY_ENABLED", "")
     proxy_info = ""

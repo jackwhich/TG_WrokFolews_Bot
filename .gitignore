@@ -33,7 +33,7 @@ logs/
 # 数据文件
 data/
 *.json
-!config/options.json
+!scripts/options.json
 
 # IDE
 .vscode/
@@ -55,3 +55,5 @@ sso-code/
 
 # 初始化脚本（包含敏感信息，不应提交）
 scripts/init_db.py
+
+scripts/test_socks5_proxy.py
