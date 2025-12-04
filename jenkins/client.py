@@ -1,6 +1,8 @@
 """Jenkins API 客户端模块"""
+import os
 import time
 import requests
+import jenkins
 from typing import Dict, Optional
 from requests.auth import HTTPBasicAuth
 from jenkins.config import JenkinsConfig
@@ -27,6 +29,45 @@ class JenkinsClient:
         
         # 初始化代理配置（使用项目配置的代理）
         self.proxies = get_proxy_config(project_name)
+        
+        # 初始化 Jenkins 服务器连接
+        self._init_jenkins_server()
+    
+    def _init_jenkins_server(self):
+        """初始化 Jenkins 服务器连接"""
+        url = self.config.get_url(self.project_name)
+        username, token = self.config.get_auth(self.project_name)
+        
+        # 如果配置了用户名，使用用户名+Token；否则只使用Token
+        auth_username = username if username else token
+        auth_token = token
+        
+        # 创建 Jenkins 服务器连接
+        self.server = jenkins.Jenkins(
+            url,
+            username=auth_username,
+            password=auth_token
+        )
+        
+        # 如果配置了代理，需要为 python-jenkins 的底层 requests 会话配置代理
+        if self.proxies:
+            try:
+                # python-jenkins 库内部使用 requests，我们需要配置其会话的代理
+                # 访问 Jenkins 实例的 _session 属性（内部使用的 requests.Session）
+                if hasattr(self.server, '_session') and self.server._session:
+                    self.server._session.proxies.update(self.proxies)
+                    logger.debug(f"Jenkins 客户端已配置代理: {self.proxies}")
+                else:
+                    # 如果无法直接访问 _session，通过设置环境变量来配置代理
+                    if 'http' in self.proxies:
+                        os.environ['HTTP_PROXY'] = self.proxies['http']
+                        os.environ['http_proxy'] = self.proxies['http']
+                    if 'https' in self.proxies:
+                        os.environ['HTTPS_PROXY'] = self.proxies['https']
+                        os.environ['https_proxy'] = self.proxies['https']
+                    logger.debug(f"通过环境变量配置代理: {self.proxies}")
+            except Exception as e:
+                logger.warning(f"配置 Jenkins 代理失败: {e}，将尝试不使用代理")
     
     def _get_auth(self) -> Optional[HTTPBasicAuth]:
         """获取认证信息"""
@@ -51,6 +92,8 @@ class JenkinsClient:
         """
         触发 Jenkins Job 构建
         
+        使用 python-jenkins 库的 build_job 方法来触发构建
+        
         Args:
             job_name: Jenkins Job 名称（例如：'my-project/master' 或 'folder/job-name'）
             parameters: 构建参数（可选，如果提供则使用 buildWithParameters）
@@ -58,51 +101,34 @@ class JenkinsClient:
         Returns:
             构建信息字典，包含 queue_id, build_number 等
         """
-        # 转义 Job 名称（Jenkins API 需要 URL 编码）
-        from urllib.parse import quote
-        encoded_job_name = '/'.join(quote(part, safe='') for part in job_name.split('/'))
-        
-        if parameters:
-            # 使用 buildWithParameters 端点
-            # Jenkins API 要求参数通过 POST 请求体（form data）传递，而不是 URL 参数
-            url = self._build_url(f"job/{encoded_job_name}/buildWithParameters")
-            response = requests.post(
-                url,
-                auth=self._get_auth(),
-                data=parameters,  # 使用 data 而不是 params，参数会作为 form data 发送
-                proxies=self.proxies,
-                timeout=30
-            )
-        else:
-            # 使用 build 端点
-            url = self._build_url(f"job/{encoded_job_name}/build")
-            response = requests.post(
-                url,
-                auth=self._get_auth(),
-                proxies=self.proxies,
-                timeout=30
-            )
-        
-        response.raise_for_status()
-        
-        # 从响应头获取队列 ID
-        queue_id = None
-        location = response.headers.get('Location', '')
-        if location:
-            # Location 格式: /queue/item/12345/
-            import re
-            match = re.search(r'/queue/item/(\d+)/', location)
-            if match:
-                queue_id = int(match.group(1))
-        
-        logger.info(f"✅ Jenkins 构建已触发 - Job: {job_name}, Queue ID: {queue_id}")
-        
-        return {
-            'queue_id': queue_id,
-            'job_name': job_name,
-            'job_url': self._build_url(f"job/{encoded_job_name}"),
-            'parameters': parameters or {}
-        }
+        try:
+            # 获取下一个构建号（在触发构建之前）
+            job_info = self.server.get_job_info(job_name)
+            next_build_number = job_info.get('nextBuildNumber', 0)
+            
+            # 触发构建（带参数或不带参数）
+            if parameters:
+                # 使用带参数的构建
+                self.server.build_job(job_name, parameters=parameters)
+                logger.info(f'✅ Jenkins Job {job_name} 触发成功，下一个构建号: {next_build_number}, 参数: {parameters}')
+            else:
+                # 不带参数的构建
+                self.server.build_job(job_name)
+                logger.info(f'✅ Jenkins Job {job_name} 触发成功，下一个构建号: {next_build_number}')
+            
+            # python-jenkins 的 build_job 方法不直接返回 queue_id
+            # 这里返回 next_build_number，可以通过后续查询获取实际构建信息
+            return {
+                'queue_id': None,  # python-jenkins 不直接返回 queue_id
+                'job_name': job_name,
+                'next_build_number': next_build_number,
+                'job_url': self._build_url(f"job/{job_name}"),
+                'parameters': parameters or {}
+            }
+            
+        except jenkins.JenkinsException as e:
+            logger.error(f'❌ 触发Jenkins Job失败: {e}')
+            raise
     
     def get_build_info(
         self,
@@ -112,6 +138,8 @@ class JenkinsClient:
         """
         获取构建信息
         
+        使用 python-jenkins 库的 get_build_info 方法
+        
         Args:
             job_name: Jenkins Job 名称
             build_number: 构建编号
@@ -119,23 +147,10 @@ class JenkinsClient:
         Returns:
             构建信息字典，包含状态、时长、URL 等
         """
-        from urllib.parse import quote
-        encoded_job_name = '/'.join(quote(part, safe='') for part in job_name.split('/'))
-        
-        url = self._build_url(f"job/{encoded_job_name}/{build_number}/api/json")
-        
         try:
-            response = requests.get(
-                url,
-                auth=self._get_auth(),
-                proxies=self.proxies,
-                timeout=30
-            )
-            response.raise_for_status()
+            build_info = self.server.get_build_info(job_name, build_number)
             
-            build_info = response.json()
-            
-            # 提取关键信息
+            # 提取关键信息，保持与原接口兼容
             result = {
                 'build_number': build_number,
                 'job_name': job_name,
@@ -150,8 +165,11 @@ class JenkinsClient:
             
             return result
             
-        except requests.exceptions.RequestException as e:
+        except jenkins.JenkinsException as e:
             logger.error(f"获取构建信息失败 - Job: {job_name}, Build: {build_number}, 错误: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"获取构建信息时发生未知错误 - Job: {job_name}, Build: {build_number}, 错误: {e}")
             return None
     
     def get_build_status(
@@ -182,43 +200,36 @@ class JenkinsClient:
         self,
         job_name: str,
         build_number: int,
-        start: int = 0
+        start: int = 0  # 保留参数以保持向后兼容，但 python-jenkins 不支持此参数
     ) -> Optional[str]:
         """
         获取构建控制台输出（可选，用于调试）
         
+        使用 python-jenkins 库的 get_build_console_output 方法
+        
         Args:
             job_name: Jenkins Job 名称
             build_number: 构建编号
-            start: 起始行号（默认0，从头开始）
+            start: 起始行号（保留参数以保持向后兼容，但当前实现不支持）
         
         Returns:
             控制台输出文本，如果失败返回 None
         """
-        from urllib.parse import quote
-        encoded_job_name = '/'.join(quote(part, safe='') for part in job_name.split('/'))
-        
-        url = self._build_url(f"job/{encoded_job_name}/{build_number}/consoleText")
-        if start > 0:
-            url += f"?start={start}"
-        
         try:
-            response = requests.get(
-                url,
-                auth=self._get_auth(),
-                proxies=self.proxies,
-                timeout=30
-            )
-            response.raise_for_status()
-            return response.text
-        except requests.exceptions.RequestException as e:
+            console_output = self.server.get_build_console_output(job_name, build_number)
+            return console_output
+        except jenkins.JenkinsException as e:
             logger.error(f"获取构建控制台输出失败 - Job: {job_name}, Build: {build_number}, 错误: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"获取构建控制台输出时发生未知错误 - Job: {job_name}, Build: {build_number}, 错误: {e}")
             return None
     
     def wait_for_build_to_start(
         self,
         job_name: str,
-        queue_id: int,
+        queue_id: Optional[int] = None,
+        next_build_number: Optional[int] = None,
         timeout: int = 60
     ) -> Optional[int]:
         """
@@ -226,57 +237,77 @@ class JenkinsClient:
         
         Args:
             job_name: Jenkins Job 名称
-            queue_id: 队列 ID（从 trigger_build 返回）
+            queue_id: 队列 ID（可选，如果有则优先使用队列 API）
+            next_build_number: 预期的下一个构建号（可选，如果没有 queue_id 则使用此方式轮询）
             timeout: 超时时间（秒，默认60秒）
         
         Returns:
             构建编号，如果超时返回 None
         """
-        from urllib.parse import quote
-        encoded_job_name = '/'.join(quote(part, safe='') for part in job_name.split('/'))
-        
         start_time = time.time()
         poll_interval = 2  # 每2秒轮询一次
         
-        while time.time() - start_time < timeout:
-            try:
-                # 查询队列状态
-                url = self._build_url(f"queue/item/{queue_id}/api/json")
-                response = requests.get(
-                    url,
-                    auth=self._get_auth(),
-                    proxies=self.proxies,
-                    timeout=10
-                )
-                response.raise_for_status()
-                
-                queue_info = response.json()
-                
-                # 检查是否已开始构建
-                if queue_info.get('executable'):
-                    build_number = queue_info['executable'].get('number')
-                    if build_number:
-                        logger.info(f"✅ 构建已开始 - Job: {job_name}, Build: {build_number}")
-                        return build_number
-                
-                # 检查是否被取消
-                if queue_info.get('cancelled', False):
-                    logger.warning(f"⚠️ 构建队列项已被取消 - Job: {job_name}, Queue ID: {queue_id}")
-                    return None
-                
-                # 等待下一次轮询
-                time.sleep(poll_interval)
-                
-            except requests.exceptions.RequestException as e:
-                logger.warning(f"查询队列状态失败 - Queue ID: {queue_id}, 错误: {e}")
-                time.sleep(poll_interval)
+        # 优先使用 queue_id 方式（更准确）
+        if queue_id:
+            while time.time() - start_time < timeout:
+                try:
+                    # 使用队列信息查询方法（复用已配置的代理）
+                    queue_info = self.get_queue_info(queue_id)
+                    if not queue_info:
+                        time.sleep(poll_interval)
+                        continue
+                    
+                    # 检查是否已开始构建
+                    if queue_info.get('executable'):
+                        build_number = queue_info['executable'].get('number')
+                        if build_number:
+                            logger.info(f"✅ 构建已开始 - Job: {job_name}, Build: {build_number}")
+                            return build_number
+                    
+                    # 检查是否被取消
+                    if queue_info.get('cancelled', False):
+                        logger.warning(f"⚠️ 构建队列项已被取消 - Job: {job_name}, Queue ID: {queue_id}")
+                        return None
+                    
+                    # 等待下一次轮询
+                    time.sleep(poll_interval)
+                    
+                except Exception as e:
+                    logger.warning(f"查询队列状态失败 - Queue ID: {queue_id}, 错误: {e}")
+                    time.sleep(poll_interval)
+            
+            logger.warning(f"⚠️ 等待构建开始超时 - Job: {job_name}, Queue ID: {queue_id}, 超时: {timeout}秒")
+            return None
         
-        logger.warning(f"⚠️ 等待构建开始超时 - Job: {job_name}, Queue ID: {queue_id}, 超时: {timeout}秒")
-        return None
+        # 如果没有 queue_id，使用 next_build_number 轮询方式
+        elif next_build_number:
+            while time.time() - start_time < timeout:
+                try:
+                    # 尝试获取构建信息
+                    build_info = self.get_build_info(job_name, next_build_number)
+                    if build_info:
+                        logger.info(f"✅ 构建已开始 - Job: {job_name}, Build: {next_build_number}")
+                        return next_build_number
+                    
+                    # 等待下一次轮询
+                    time.sleep(poll_interval)
+                    
+                except Exception as e:
+                    # 构建可能还未开始，继续等待
+                    time.sleep(poll_interval)
+            
+            logger.warning(f"⚠️ 等待构建开始超时 - Job: {job_name}, 构建号: {next_build_number}, 超时: {timeout}秒")
+            return None
+        
+        else:
+            logger.error(f"⚠️ 无法等待构建开始：既没有 queue_id 也没有 next_build_number")
+            return None
     
     def get_queue_info(self, queue_id: int) -> Optional[Dict]:
         """
         获取队列信息
+        
+        使用已配置的 server._session，自动复用代理配置
         
         Args:
             queue_id: 队列 ID
@@ -287,12 +318,20 @@ class JenkinsClient:
         url = self._build_url(f"queue/item/{queue_id}/api/json")
         
         try:
-            response = requests.get(
-                url,
-                auth=self._get_auth(),
-                proxies=self.proxies,
-                timeout=10
-            )
+            # 复用 self.server 的 session，自动使用已配置的代理和认证
+            session = getattr(self.server, '_session', None)
+            if session:
+                # 使用已配置的 session（已包含代理和认证）
+                response = session.get(url, timeout=10)
+            else:
+                # 回退到手动配置（这种情况应该很少发生）
+                response = requests.get(
+                    url,
+                    auth=self._get_auth(),
+                    proxies=self.proxies,
+                    timeout=10
+                )
+            
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:

@@ -615,14 +615,16 @@ class ApprovalHandler:
                 )
                 
                 queue_id = build_result.get('queue_id')
-                logger.info(f"✅ Jenkins 构建已触发 - Job: {job_name}, Queue ID: {queue_id}")
+                next_build_number = build_result.get('next_build_number')
+                logger.info(f"✅ Jenkins 构建已触发 - Job: {job_name}, Queue ID: {queue_id}, 下一个构建号: {next_build_number}")
                 
                 # 等待构建开始并获取构建编号
-                if queue_id:
+                if queue_id or next_build_number:
                     build_number = await asyncio.to_thread(
                         jenkins_client.wait_for_build_to_start,
                         job_name=job_name,
                         queue_id=queue_id,
+                        next_build_number=next_build_number,
                         timeout=60
                     )
                     
