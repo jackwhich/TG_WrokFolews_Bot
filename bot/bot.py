@@ -117,13 +117,25 @@ def main():
     from utils.proxy import get_proxy_for_httpx, get_proxy_url
     proxy = get_proxy_for_httpx()
     
+    # 获取代理 URL 用于日志显示
+    proxy_url = get_proxy_url()
+    proxy_info = ""
     if proxy:
         request_kwargs["proxy"] = proxy
-        # 获取代理 URL 用于日志显示
-        proxy_url = get_proxy_url()
-        logger.info(f"✅ 已配置代理: {proxy_url.split('@')[-1] if '@' in proxy_url else proxy_url}")
-        if proxy_url and proxy_url.startswith("socks5h://"):
-            logger.info("   ℹ️ 使用 socks5h:// 协议（DNS 解析通过代理服务器）")
+        if proxy_url:
+            # 提取代理主机和端口用于日志显示（隐藏用户名密码）
+            display_url = proxy_url.split('@')[-1] if '@' in proxy_url else proxy_url
+            logger.info(f"✅ 已配置代理: {display_url}")
+            # 从 URL 中提取主机和端口
+            if '@' in proxy_url:
+                url_part = proxy_url.split('@')[-1]
+            else:
+                url_part = proxy_url.split('://')[-1] if '://' in proxy_url else proxy_url
+            if ':' in url_part:
+                host_port = url_part.split('/')[0]  # 移除路径部分
+                proxy_info = f", 代理: {host_port}"
+            if proxy_url.startswith("socks5h://"):
+                logger.info("   ℹ️ 使用 socks5h:// 协议（DNS 解析通过代理服务器）")
     else:
         logger.info("ℹ️ 未启用代理")
     
@@ -141,14 +153,6 @@ def main():
         .get_updates_request(request)
         .build()
     )
-    
-    proxy_enabled = WorkflowManager.get_app_config("PROXY_ENABLED", "")
-    proxy_info = ""
-    if proxy_enabled and proxy_enabled.lower() == "true":
-        proxy_host = WorkflowManager.get_app_config("PROXY_HOST", "")
-        proxy_port = WorkflowManager.get_app_config("PROXY_PORT", "")
-        if proxy_host and proxy_port:
-            proxy_info = f", 代理: {proxy_host}:{proxy_port}"
     logger.info(
         f"✅ Bot应用已创建（连接池优化 - 连接池大小: {Settings.CONNECTION_POOL_SIZE}, "
         f"读取超时: {Settings.HTTP_READ_TIMEOUT}s, 写入超时: {Settings.HTTP_WRITE_TIMEOUT}s, "

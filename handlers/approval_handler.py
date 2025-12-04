@@ -562,20 +562,46 @@ class ApprovalHandler:
             
             logger.info(f"✅ 数据验证通过，将为 {len(services)} 个服务触发 Jenkins 构建")
             
+            # 获取项目的 services 配置，找到对应环境的 key
+            from workflows.models import WorkflowManager
+            options = WorkflowManager.get_project_options()
+            project_config = options.get('projects', {}).get(project_name, {})
+            services_config = project_config.get('services', {})
+            
+            # 在 services 字典中查找匹配 environment 的 key（不区分大小写）
+            env_key = None
+            if isinstance(services_config, dict):
+                # 先尝试精确匹配
+                if environment in services_config:
+                    env_key = environment
+                else:
+                    # 如果不区分大小写匹配
+                    env_lower = environment.lower()
+                    for key in services_config.keys():
+                        if key.lower() == env_lower:
+                            env_key = key
+                            break
+            
+            if not env_key:
+                raise ValueError(f"无法在项目的 services 配置中找到环境 '{environment}' 对应的 key")
+            
+            logger.info(f"   使用 services 配置中的环境 key: {env_key}")
+            
             # 使用项目名称初始化 Jenkins 客户端和监控器（会使用该项目的配置和代理）
             jenkins_client = JenkinsClient(project_name)
             monitor = JenkinsMonitor(project_name)
             
             # 为每个服务触发构建
-            # 注意：services 中的值就是 Jenkins Job 名称，不需要映射
+            # 注意：Jenkins Job 名称格式为：services字典的key/服务名（如：uat/pre-eb-web-api）
             # hashes 与 services 一一对应，通过索引获取
             for idx, service_name in enumerate(services):
-                # 直接使用 service_name 作为 Jenkins Job 名称
-                job_name = service_name
+                # 构建 Jenkins Job 名称：使用 services 字典的 key/服务名
+                job_name = f"{env_key}/{service_name}"
                 
                 logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
                 logger.info(f"📡 [{idx + 1}/{len(services)}] 触发 Jenkins 构建")
                 logger.info(f"   服务名称: {service_name}")
+                logger.info(f"   环境: {environment}")
                 logger.info(f"   Jenkins Job: {job_name}")
                 
                 # 获取对应的 Git Hash（与 service 一一对应）

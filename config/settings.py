@@ -134,7 +134,16 @@ class Settings:
         # 如果 services 是字典（按环境区分），根据环境返回对应服务
         if isinstance(services, dict):
             if environment:
-                return services.get(environment, [])
+                # 先尝试精确匹配
+                if environment in services:
+                    return services.get(environment, [])
+                # 如果不区分大小写匹配
+                env_lower = environment.lower()
+                for key, value in services.items():
+                    if key.lower() == env_lower:
+                        return value
+                # 如果都没找到，返回空列表
+                return []
             else:
                 # 如果没有指定环境，返回所有环境的服务（去重）
                 all_services = []

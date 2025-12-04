@@ -1,6 +1,5 @@
 """Jenkins API 客户端模块"""
 import os
-import re
 import time
 from typing import Dict, Optional
 import jenkins
@@ -29,13 +28,33 @@ class JenkinsClient:
         url = self.config.get_url(project_name)
         username, token = self.config.get_auth(project_name)
         proxies = get_proxy_config(project_name)
+        
+        # 创建 Jenkins 服务器连接
         self.server = jenkins.Jenkins(
             url=url,
             username=username,
             password=token,
-            timeout=30,
-            proxies=proxies
+            timeout=30
         )
+        
+        # 配置代理（如果有）
+        if proxies:
+            try:
+                # python-jenkins 库内部使用 requests.Session，通过 _session 配置代理
+                if hasattr(self.server, '_session') and self.server._session:
+                    self.server._session.proxies.update(proxies)
+                    logger.debug(f"Jenkins 客户端已配置代理: {proxies}")
+                else:
+                    # 如果无法直接访问 _session，通过环境变量配置代理
+                    if 'http' in proxies:
+                        os.environ['HTTP_PROXY'] = proxies['http']
+                        os.environ['http_proxy'] = proxies['http']
+                    if 'https' in proxies:
+                        os.environ['HTTPS_PROXY'] = proxies['https']
+                        os.environ['https_proxy'] = proxies['https']
+                    logger.debug(f"通过环境变量配置代理: {proxies}")
+            except Exception as e:
+                logger.warning(f"配置 Jenkins 代理失败: {e}，将尝试不使用代理")
     
     def trigger_build(
         self,
@@ -80,65 +99,23 @@ class JenkinsClient:
         使用 python-jenkins 库
         
         Args:
-            job_name: Jenkins Job 名称
+            job_name: Jenkins Job 名称（例如：'uat/pre-blockchain-external-wallet-service'）
             build_number: 构建编号
         
         Returns:
             构建信息字典，包含状态、时长、URL 等
         """
         try:
-            return self.server.get_build_info(job_name, build_number)
+            build_info = self.server.get_build_info(job_name, build_number)
+            if build_info:
+                # 记录查询信息（用于调试）
+                build_url = build_info.get('url', '')
+                is_building = build_info.get('building', False)
+                status = build_info.get('result', 'BUILDING' if is_building else 'UNKNOWN')
+                logger.debug(f"查询构建状态 - Job: {job_name}, Build: #{build_number}, 状态: {status}, URL: {build_url}")
+            return build_info
         except Exception as e:
-            logger.error(f"获取构建信息失败: {e}")
-            return None
-    
-    def get_build_status(
-        self,
-        job_name: str,
-        build_number: int
-    ) -> Optional[str]:
-        """
-        获取构建状态
-        
-        Args:
-            job_name: Jenkins Job 名称
-            build_number: 构建编号
-        
-        Returns:
-            构建状态（SUCCESS/FAILURE/BUILDING/ABORTED/UNSTABLE），如果失败返回 None
-        """
-        build_info = self.get_build_info(job_name, build_number)
-        if not build_info:
-            return None
-        
-        if build_info.get('building', False):
-            return 'BUILDING'
-        
-        return build_info.get('result') or 'BUILDING'
-    
-    def get_build_console_output(
-        self,
-        job_name: str,
-        build_number: int,
-        start: int = 0  # 保留参数以保持向后兼容，但 python-jenkins 不支持此参数
-    ) -> Optional[str]:
-        """
-        获取构建控制台输出（可选，用于调试）
-        
-        使用 python-jenkins 库的 get_build_console_output 方法
-        
-        Args:
-            job_name: Jenkins Job 名称
-            build_number: 构建编号
-            start: 起始行号（保留参数以保持向后兼容，但当前实现不支持）
-        
-        Returns:
-            控制台输出文本，如果失败返回 None
-        """
-        try:
-            return self.server.get_build_console_output(job_name, build_number)
-        except Exception as e:
-            logger.error(f"获取控制台输出失败: {e}")
+            logger.error(f"❌ 获取构建信息失败 - Job: {job_name}, Build: #{build_number}, 错误: {e}")
             return None
     
     def wait_for_build_to_start(
