@@ -232,7 +232,7 @@ class FormHandler:
     
     @staticmethod
     async def show_service_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """显示服务选择（紧凑布局，每行3个按钮）"""
+        """显示服务选择（每行3个按钮，确保完整显示服务名称）"""
         form_data = context.user_data.get('form_data', {})
         project = form_data.get('project')
         environment = form_data.get('environment')
@@ -267,24 +267,30 @@ class FormHandler:
         selected_services = [s for s in selected_services if s in services]
         context.user_data['form_data']['services'] = selected_services
         
-        # 构建按钮键盘（每行显示1个按钮，显示完整服务名称）
+        # 构建按钮键盘（每行显示3个按钮，确保完整显示服务名称）
         keyboard = []
-        for service in services:
+        row = []
+        for i, service in enumerate(services):
             # 如果已选择，显示 ✓ 标记
             is_selected = service in selected_services
             
-            # 按钮文本：✓ 服务名 或 服务名
+            # 按钮文本：✓ 服务名 或 服务名（完整显示）
             if is_selected:
                 btn_text = f"✓ {service}"
             else:
                 btn_text = service
             
-            keyboard.append([
+            row.append(
                 InlineKeyboardButton(
                     btn_text,
                     callback_data=f"{ACTION_SELECT_SERVICE}:{service}"
                 )
-            ])
+            )
+            
+            # 每3个按钮一行，或者到达最后一个服务
+            if len(row) == 3 or i == len(services) - 1:
+                keyboard.append(row)
+                row = []
         
         # 添加"完成选择"按钮
         keyboard.append([

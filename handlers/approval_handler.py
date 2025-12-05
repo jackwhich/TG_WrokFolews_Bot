@@ -89,8 +89,21 @@ class ApprovalHandler:
                             f"用户 {approver_id} ({approver_username}) 尝试审批但无权限，"
                             f"配置的审批人: {', '.join(configured_info)}"
                         )
-                        # 显示无权限提示（使用 show_alert=True 显示弹窗）
-                        await query.answer("❌ 你无权同意此次服务发版", show_alert=True)
+                        # 快速响应按钮点击（不显示弹窗）
+                        await query.answer()
+                        
+                        # 回复消息通知用户无权限
+                        try:
+                            message = query.message
+                            if message:
+                                await message.reply_text(
+                                    "❌ 您无此审批权限\n\n"
+                                    "请联系管理员"
+                                )
+                                logger.info(f"已向用户 {approver_id} ({approver_username}) 发送无权限通知消息")
+                        except Exception as e:
+                            logger.error(f"发送无权限通知消息失败: {str(e)}", exc_info=True)
+                        
                         return
             elif action == ACTION_REJECT:
                 # 拒绝操作不需要权限检查，所有人都可以拒绝（相当于取消按钮）
