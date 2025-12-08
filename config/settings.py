@@ -155,6 +155,22 @@ class Settings:
         return services if isinstance(services, list) else []
     
     @classmethod
+    def get_default_branch(cls, project: str, default: str = "main") -> str:
+        """
+        根据项目获取默认分支
+        
+        Args:
+            project: 项目名称
+            default: 如果项目未配置默认分支，返回的默认值
+        
+        Returns:
+            默认分支名称
+        """
+        options = cls.load_options()
+        project_data = options.get("projects", {}).get(project, {})
+        return project_data.get("default_branch", default)
+    
+    @classmethod
     def get_group_ids_by_project(cls, project: str) -> List[int]:
         """
         根据项目获取群组ID列表

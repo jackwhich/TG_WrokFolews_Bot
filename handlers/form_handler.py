@@ -31,25 +31,40 @@ class FormHandler:
     """表单处理器"""
     
     @staticmethod
-    def _init_form_data(context: ContextTypes.DEFAULT_TYPE):
+    async def _get_default_branch(project: str = None) -> str:
+        """获取默认分支（从配置中读取）"""
+        if project:
+            return await asyncio.to_thread(Settings.get_default_branch, project, "main")
+        return "main"  # 如果没有项目，返回通用默认值
+    
+    @staticmethod
+    async def _init_form_data(context: ContextTypes.DEFAULT_TYPE):
         """初始化表单数据"""
         if 'form_data' not in context.user_data:
+            # 获取项目名称，用于获取默认分支
+            project = context.user_data.get('project_name') or context.user_data.get('form_data', {}).get('project')
+            default_branch = await FormHandler._get_default_branch(project) if project else "main"
+            
             context.user_data['form_data'] = {
                 'apply_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 'project': None,
                 'environment': None,
                 'services': [],
                 'hash': None,
-                'branch': 'uat-ebpay',  # 默认分支
+                'branch': default_branch,  # 从配置中获取默认分支
                 'content': None,
             }
         return context.user_data['form_data']
     
     @staticmethod
-    def _format_submission_data(form_data: dict) -> str:
+    async def _format_submission_data(form_data: dict) -> str:
         """格式化提交数据"""
         services_text = ", ".join(form_data.get('services', []))
-        branch_text = form_data.get('branch', 'uat-ebpay')
+        # 如果分支为空，从配置中获取默认分支
+        branch_text = form_data.get('branch')
+        if not branch_text:
+            project = form_data.get('project')
+            branch_text = await FormHandler._get_default_branch(project) if project else "main"
         return (
             f"申请时间: {form_data['apply_time']}\n"
             f"申请项目: {form_data['project']}\n"
@@ -71,7 +86,7 @@ class FormHandler:
             logger.info(f"收到部署命令，用户ID: {update.effective_user.id}, 项目: {project_name or '未指定'}")
             
             # 初始化表单数据
-            form_data = FormHandler._init_form_data(context)
+            form_data = await FormHandler._init_form_data(context)
             apply_time = form_data['apply_time']
             
             # 如果命令中指定了项目，直接设置项目并跳过项目选择
@@ -232,7 +247,7 @@ class FormHandler:
     
     @staticmethod
     async def show_service_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """显示服务选择（每行3个按钮，确保完整显示服务名称）"""
+        """显示服务选择（每行1个按钮，确保完整显示服务名称）"""
         form_data = context.user_data.get('form_data', {})
         project = form_data.get('project')
         environment = form_data.get('environment')
@@ -267,10 +282,9 @@ class FormHandler:
         selected_services = [s for s in selected_services if s in services]
         context.user_data['form_data']['services'] = selected_services
         
-        # 构建按钮键盘（每行显示3个按钮，确保完整显示服务名称）
+        # 构建按钮键盘（每行显示1个按钮，确保完整显示服务名称）
         keyboard = []
-        row = []
-        for i, service in enumerate(services):
+        for service in services:
             # 如果已选择，显示 ✓ 标记
             is_selected = service in selected_services
             
@@ -280,17 +294,13 @@ class FormHandler:
             else:
                 btn_text = service
             
-            row.append(
+            # 每个服务独占一行，确保按钮足够宽，可以完整显示服务名称
+            keyboard.append([
                 InlineKeyboardButton(
                     btn_text,
                     callback_data=f"{ACTION_SELECT_SERVICE}:{service}"
                 )
-            )
-            
-            # 每3个按钮一行，或者到达最后一个服务
-            if len(row) == 3 or i == len(services) - 1:
-                keyboard.append(row)
-                row = []
+            ])
         
         # 添加"完成选择"按钮
         keyboard.append([
@@ -301,7 +311,10 @@ class FormHandler:
         
         # 构建消息文本
         selected_text = ", ".join(selected_services) if selected_services else "未选择"
-        branch_text = form_data.get('branch', 'uat-ebpay')
+        # 从配置中获取默认分支
+        branch_text = form_data.get('branch')
+        if not branch_text:
+            branch_text = await FormHandler._get_default_branch(project)
         
         message = "📋 申请测试环境服务发版\n\n" \
                  f"✅ 申请时间: {form_data['apply_time']}\n" \
@@ -332,7 +345,11 @@ class FormHandler:
             # 完成选择，进入输入hash步骤
             form_data = context.user_data['form_data']
             services_text = ", ".join(selected_services)
-            branch_text = form_data.get('branch', 'uat-ebpay')
+            # 从配置中获取默认分支
+            branch_text = form_data.get('branch')
+            if not branch_text:
+                project = form_data.get('project')
+                branch_text = await FormHandler._get_default_branch(project) if project else "main"
             message = "📋 申请测试环境服务发版\n\n" \
                      f"✅ 申请时间: {form_data['apply_time']}\n" \
                      f"✅ 申请项目: {form_data['project']}\n" \
@@ -405,7 +422,7 @@ class FormHandler:
             hash_value = ", ".join(hash_list)
             
             # 确保表单数据已初始化
-            FormHandler._init_form_data(context)
+            await FormHandler._init_form_data(context)
             context.user_data['form_data']['hash'] = hash_value
             logger.info(f"hash已保存: {hash_value}, 完整表单数据: {context.user_data['form_data']}")
             
@@ -425,12 +442,15 @@ class FormHandler:
         """显示输入分支界面"""
         try:
             form_data = context.user_data.get('form_data', {})
-            branch_text = form_data.get('branch', 'uat-ebpay')
+            project = form_data.get('project')
+            # 从配置中获取默认分支
+            default_branch = await FormHandler._get_default_branch(project) if project else "main"
+            branch_text = form_data.get('branch', default_branch)
             
             # 创建键盘，提供默认选项和自定义输入
             keyboard = [
                 [
-                    InlineKeyboardButton("✅ 使用默认: uat-ebpay", callback_data="branch:default")
+                    InlineKeyboardButton(f"✅ 使用默认: {default_branch}", callback_data="branch:default")
                 ],
                 [
                     InlineKeyboardButton("✏️ 自定义输入", callback_data="branch:custom")
@@ -465,9 +485,12 @@ class FormHandler:
                 
                 if query.data == "branch:default":
                     # 使用默认分支
-                    FormHandler._init_form_data(context)
-                    context.user_data['form_data']['branch'] = 'uat-ebpay'
-                    logger.info(f"用户 {query.from_user.id} 选择默认分支: uat-ebpay")
+                    await FormHandler._init_form_data(context)
+                    form_data = context.user_data['form_data']
+                    project = form_data.get('project')
+                    default_branch = await FormHandler._get_default_branch(project) if project else "main"
+                    context.user_data['form_data']['branch'] = default_branch
+                    logger.info(f"用户 {query.from_user.id} 选择默认分支: {default_branch}")
                     
                     # 显示服务选择界面
                     return await FormHandler.show_service_selection(update, context)
@@ -500,7 +523,7 @@ class FormHandler:
                 return INPUTTING_BRANCH
             
             # 确保表单数据已初始化
-            FormHandler._init_form_data(context)
+            await FormHandler._init_form_data(context)
             context.user_data['form_data']['branch'] = branch_value
             logger.info(f"分支已保存: {branch_value}, 完整表单数据: {context.user_data['form_data']}")
             
@@ -522,7 +545,11 @@ class FormHandler:
             form_data = context.user_data.get('form_data', {})
             services_text = ", ".join(form_data.get('services', [])) if form_data.get('services') else "未选择"
             hash_text = form_data.get('hash', 'N/A')
-            branch_text = form_data.get('branch', 'uat-ebpay')
+            # 从配置中获取默认分支
+            branch_text = form_data.get('branch')
+            if not branch_text:
+                project = form_data.get('project')
+                branch_text = await FormHandler._get_default_branch(project) if project else "main"
             message = "📋 申请测试环境服务发版\n\n" \
                      f"✅ 申请时间: {form_data.get('apply_time', 'N/A')}\n" \
                      f"✅ 申请项目: {form_data.get('project', 'N/A')}\n" \
@@ -561,7 +588,7 @@ class FormHandler:
                 return INPUTTING_CONTENT
             
             # 确保表单数据已初始化
-            FormHandler._init_form_data(context)
+            await FormHandler._init_form_data(context)
             context.user_data['form_data']['content'] = content_value
             logger.info(f"发版内容已保存: {content_value}, 完整表单数据: {context.user_data['form_data']}")
             
@@ -607,7 +634,7 @@ class FormHandler:
                 return ConversationHandler.END
             
             # 格式化提交数据
-            submission_data = FormHandler._format_submission_data(form_data)
+            submission_data = await FormHandler._format_submission_data(form_data)
             message = "📋 请确认您的申请信息：\n\n" + submission_data
             
             keyboard = [
@@ -648,7 +675,7 @@ class FormHandler:
                 return ConversationHandler.END
             
             # 格式化提交数据
-            submission_data = FormHandler._format_submission_data(form_data)
+            submission_data = await FormHandler._format_submission_data(form_data)
             
             # 更新消息显示"正在提交..."
             await query.edit_message_text("⏳ 正在提交工作流...")
