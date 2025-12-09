@@ -24,6 +24,7 @@ class WorkflowManager:
     
     # 数据库连接（线程安全，使用连接池）
     _connection: Optional[sqlite3.Connection] = None
+    _schema_initialized: bool = False
     
     # 数据保留天数（60天）
     RETENTION_DAYS = 60
@@ -46,7 +47,200 @@ class WorkflowManager:
             
             logger.debug(f"SQLite 数据库连接已建立: {cls.DB_FILE}")
         
+        # 确保表结构
+        if not cls._schema_initialized:
+            cls._ensure_schema()
+        
         return cls._connection
+
+    # ------------------------------------------------------------------ schema helpers
+    @classmethod
+    def _ensure_column(cls, cursor: sqlite3.Cursor, table: str, column: str, definition: str):
+        """如果列不存在则新增"""
+        cursor.execute(f"PRAGMA table_info({table})")
+        columns = [row[1] for row in cursor.fetchall()]
+        if column not in columns:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    @classmethod
+    def _ensure_schema(cls):
+        """初始化/迁移表结构（幂等）"""
+        conn = cls._connection
+        if conn is None:
+            return
+        cursor = conn.cursor()
+
+        # 原有表结构
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS workflows (
+                workflow_id TEXT PRIMARY KEY,
+                timestamp INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                username TEXT NOT NULL,
+                submission_data TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                approver_id INTEGER,
+                approver_username TEXT,
+                approval_time TEXT,
+                approval_comment TEXT,
+                created_at TEXT NOT NULL,
+                synced_to_api INTEGER NOT NULL DEFAULT 0,
+                group_messages TEXT
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS workflow_messages (
+                message_id INTEGER PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                group_id INTEGER NOT NULL,
+                FOREIGN KEY (workflow_id) REFERENCES workflows(workflow_id) ON DELETE CASCADE
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS project_options (
+                config_key TEXT PRIMARY KEY,
+                config_value TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS app_config (
+                config_key TEXT PRIMARY KEY,
+                config_value TEXT,
+                updated_at INTEGER NOT NULL
+            )
+        """)
+
+        # SSO 相关表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sso_submissions (
+                submission_id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                process_instance_id TEXT,
+                sso_order_data TEXT NOT NULL,
+                submit_status TEXT NOT NULL DEFAULT 'pending',
+                submit_time INTEGER NOT NULL,
+                submit_response TEXT,
+                error_message TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (workflow_id) REFERENCES workflows(workflow_id) ON DELETE CASCADE
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sso_build_status (
+                build_id TEXT PRIMARY KEY,
+                submission_id TEXT NOT NULL,
+                workflow_id TEXT NOT NULL,
+                release_id INTEGER NOT NULL,
+                job_name TEXT NOT NULL,
+                service_name TEXT,
+                job_id TEXT,
+                build_status TEXT NOT NULL DEFAULT 'BUILDING',
+                build_start_time INTEGER,
+                build_end_time INTEGER,
+                build_detail TEXT,
+                notified INTEGER NOT NULL DEFAULT 0,
+                notification_time INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (submission_id) REFERENCES sso_submissions(submission_id) ON DELETE CASCADE,
+                FOREIGN KEY (workflow_id) REFERENCES workflows(workflow_id) ON DELETE CASCADE
+            )
+        """)
+
+        # 新增：消息模板表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS message_templates (
+                template_type TEXT NOT NULL,
+                project TEXT,
+                content TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (template_type, project)
+            )
+        """)
+
+        # 迁移新增列
+        cls._ensure_column(cursor, "workflows", "project", "TEXT")
+        cls._ensure_column(cursor, "workflows", "template_type", "TEXT")
+
+        # 索引（保留原有，存在则跳过）
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_workflows_timestamp 
+            ON workflows(timestamp)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_workflows_status 
+            ON workflows(status)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_workflows_user_id 
+            ON workflows(user_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_workflows_approver_id 
+            ON workflows(approver_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_workflows_synced_to_api 
+            ON workflows(synced_to_api)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_workflow_messages_workflow_id 
+            ON workflow_messages(workflow_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_workflow_messages_group_id 
+            ON workflow_messages(group_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_workflow_messages_message_id 
+            ON workflow_messages(message_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_workflows_status_timestamp 
+            ON workflows(status, timestamp DESC)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_workflows_user_timestamp 
+            ON workflows(user_id, timestamp DESC)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_workflows_approver_timestamp 
+            ON workflows(approver_id, timestamp DESC)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sso_submissions_workflow_id 
+            ON sso_submissions(workflow_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sso_submissions_process_instance_id 
+            ON sso_submissions(process_instance_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sso_build_status_workflow_id 
+            ON sso_build_status(workflow_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sso_build_status_submission_id 
+            ON sso_build_status(submission_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sso_build_status_job_id 
+            ON sso_build_status(job_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sso_build_status_status 
+            ON sso_build_status(build_status)
+        """)
+
+        conn.commit()
+        cls._schema_initialized = True
     
     @classmethod
     def _init_database(cls):
@@ -361,6 +555,113 @@ class WorkflowManager:
         except Exception as e:
             logger.error(f"更新项目配置失败: {str(e)}", exc_info=True)
             return False
+
+    # ======================== 模板读写 ========================
+    @classmethod
+    def _ensure_default_templates(cls):
+        """如果模板表缺省，则写入默认模板（幂等）"""
+        from config.constants import (
+            WORKFLOW_MESSAGE_TEMPLATE,
+            WORKFLOW_APPROVED_TEMPLATE,
+            WORKFLOW_REJECTED_TEMPLATE,
+            WORKFLOW_MESSAGE_TEMPLATE_ADDRESS,
+            WORKFLOW_APPROVED_TEMPLATE_ADDRESS,
+            WORKFLOW_REJECTED_TEMPLATE_ADDRESS,
+        )
+        conn = cls._get_connection()
+        cursor = conn.cursor()
+
+        defaults = {
+            ("default", None): WORKFLOW_MESSAGE_TEMPLATE,
+            ("approved_default", None): WORKFLOW_APPROVED_TEMPLATE,
+            ("rejected_default", None): WORKFLOW_REJECTED_TEMPLATE,
+            ("address_only", None): WORKFLOW_MESSAGE_TEMPLATE_ADDRESS,
+            ("approved_address_only", None): WORKFLOW_APPROVED_TEMPLATE_ADDRESS,
+            ("rejected_address_only", None): WORKFLOW_REJECTED_TEMPLATE_ADDRESS,
+        }
+
+        timestamp = int(time.time())
+        changed = False
+        for (tpl_type, project), content in defaults.items():
+            cursor.execute(
+                "SELECT 1 FROM message_templates WHERE template_type = ? AND project IS ?",
+                (tpl_type, project),
+            )
+            if cursor.fetchone() is None:
+                cursor.execute(
+                    """
+                    INSERT INTO message_templates (template_type, project, content, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (tpl_type, project, content, timestamp),
+                )
+                changed = True
+        if changed:
+            conn.commit()
+
+    @classmethod
+    def set_message_template(cls, template_type: str, content: str, project: Optional[str] = None) -> bool:
+        """写入/更新消息模板"""
+        conn = cls._get_connection()
+        cursor = conn.cursor()
+        try:
+            timestamp = int(time.time())
+            cursor.execute(
+                """
+                INSERT INTO message_templates (template_type, project, content, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(template_type, project) DO UPDATE SET
+                    content=excluded.content,
+                    updated_at=excluded.updated_at
+                """,
+                (template_type, project, content, timestamp),
+            )
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"更新消息模板失败: {str(e)}", exc_info=True)
+            return False
+
+    @classmethod
+    def get_message_template(
+        cls,
+        template_type: str,
+        project: Optional[str] = None,
+        default: Optional[str] = None
+    ) -> str:
+        """获取消息模板，优先项目级，其次通用，最后回退默认值"""
+        conn = cls._get_connection()
+        cursor = conn.cursor()
+
+        # 确保有缺省模板
+        cls._ensure_default_templates()
+
+        # 项目级
+        if project:
+            cursor.execute(
+                """
+                SELECT content FROM message_templates
+                WHERE template_type = ? AND project = ?
+                """,
+                (template_type, project),
+            )
+            row = cursor.fetchone()
+            if row and row[0]:
+                return row[0]
+
+        # 全局
+        cursor.execute(
+            """
+            SELECT content FROM message_templates
+            WHERE template_type = ? AND project IS NULL
+            """,
+            (template_type,),
+        )
+        row = cursor.fetchone()
+        if row and row[0]:
+            return row[0]
+
+        return default or ""
     
     @classmethod
     def _row_to_dict(cls, row: sqlite3.Row) -> dict:
@@ -381,6 +682,10 @@ class WorkflowManager:
         
         # 转换 synced_to_api
         data['synced_to_api'] = bool(data.get('synced_to_api', 0))
+
+        # 补充模板类型/项目字段默认值
+        data['project'] = data.get('project')
+        data['template_type'] = data.get('template_type') or "default"
         
         return data
     
@@ -515,6 +820,8 @@ class WorkflowManager:
         user_id: int,
         username: str,
         submission_data: str,
+        project: Optional[str] = None,
+        template_type: str = "default",
     ) -> dict:
         """
         创建工作流
@@ -539,9 +846,9 @@ class WorkflowManager:
         cursor.execute("""
             INSERT INTO workflows (
                 workflow_id, timestamp, user_id, username, submission_data,
-                status, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (workflow_id, timestamp, user_id, username, submission_data, STATUS_PENDING, created_at))
+                status, created_at, project, template_type
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (workflow_id, timestamp, user_id, username, submission_data, STATUS_PENDING, created_at, project, template_type))
         
         conn.commit()
         logger.info(f"✅ 工作流已创建 - ID: {workflow_id}, 用户: {username} ({user_id})")
@@ -556,7 +863,9 @@ class WorkflowManager:
             "status": STATUS_PENDING,
             "created_at": created_at,
             "synced_to_api": False,
-            "group_messages": {}
+            "group_messages": {},
+            "project": project,
+            "template_type": template_type,
         }
     
     @classmethod
@@ -626,7 +935,8 @@ class WorkflowManager:
         allowed_fields = [
             'user_id', 'username', 'submission_data', 'status',
             'approver_id', 'approver_username', 'approval_time',
-            'approval_comment', 'synced_to_api', 'group_messages'
+            'approval_comment', 'synced_to_api', 'group_messages',
+            'project', 'template_type'
         ]
         
         for field, value in kwargs.items():

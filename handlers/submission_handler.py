@@ -20,6 +20,7 @@ class SubmissionHandler:
         context: ContextTypes.DEFAULT_TYPE,
         submission_data: str,
         project: str = None,
+        template_type: str = "default",
     ) -> bool:
         """
         处理用户提交信息
@@ -66,6 +67,8 @@ class SubmissionHandler:
                 user_id=user_id,
                 username=username,
                 submission_data=submission_data,
+                project=project,
+                template_type=template_type or "default",
             )
             workflow_id = workflow_data['workflow_id']
             logger.info(f"✅ 工作流创建成功 - ID: {workflow_id}, 用户: {username} ({user_id})")

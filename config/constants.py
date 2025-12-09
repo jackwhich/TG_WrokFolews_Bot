@@ -17,11 +17,12 @@ ACTION_REJECT = "reject"
     SELECTING_PROJECT,
     SELECTING_ENVIRONMENT,
     SELECTING_SERVICE,
+    INPUTTING_ADDRESS,
     INPUTTING_HASH,
     INPUTTING_BRANCH,
     INPUTTING_CONTENT,
     CONFIRMING_FORM,
-) = range(9)
+) = range(10)
 
 # 提交确认操作
 ACTION_CONFIRM_SUBMIT = "confirm_submit"
@@ -86,6 +87,57 @@ WORKFLOW_REJECTED_TEMPLATE = """━━━━━━━━━━━━━━━━
 📅 审批时间: {approval_time}
 
 申请发版服务
+{submission_data}
+
+💬 审批意见: {approval_comment}"""
+
+# 地址类项目默认模板（仅作为数据库缺省回退使用）
+WORKFLOW_MESSAGE_TEMPLATE_ADDRESS = """━━━━━━━━━━━━━━━━━━━━
+📋 链接节点地址审批请求
+━━━━━━━━━━━━━━━━━━━━
+
+🆔 工作流ID: `{workflow_id}`
+👤 提交人: @{username}
+📅 提交时间: {created_at}
+
+━━━━━━━━━━━━━━━━━━━━
+📝 申请新增地址
+━━━━━━━━━━━━━━━━━━━━
+
+{submission_data}
+
+━━━━━━━━━━━━━━━━━━━━
+⏳ 状态: {status}
+━━━━━━━━━━━━━━━━━━━━
+
+@{approver_username} 请审批"""
+
+WORKFLOW_APPROVED_TEMPLATE_ADDRESS = """━━━━━━━━━━━━━━━━━━━━
+✅ 链接节点地址已通过
+━━━━━━━━━━━━━━━━━━━━
+
+🆔 工作流ID: `{workflow_id}`
+👤 提交人: @{username}
+✅ 审批人: @{approver_username}
+📅 审批时间: {approval_time}
+
+━━━━━━━━━━━━━━━━━━━━
+📝 申请新增地址
+━━━━━━━━━━━━━━━━━━━━
+
+{submission_data}
+"""
+
+WORKFLOW_REJECTED_TEMPLATE_ADDRESS = """━━━━━━━━━━━━━━━━━━━━
+❌ 链接节点地址已拒绝
+━━━━━━━━━━━━━━━━━━━━
+
+🆔 工作流ID: {workflow_id}
+👤 提交人: @{username}
+❌ 审批人: @{approver_username}
+📅 审批时间: {approval_time}
+
+申请新增地址
 {submission_data}
 
 💬 审批意见: {approval_comment}"""

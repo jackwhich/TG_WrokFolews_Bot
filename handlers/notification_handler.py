@@ -59,6 +59,7 @@ class NotificationHandler:
             message_text = format_workflow_message(
                 workflow_data,
                 approver_username,
+                template_type=workflow_data.get("template_type"),
             )
             logger.debug(f"工作流消息已格式化，长度: {len(message_text)}")
             
@@ -132,6 +133,7 @@ class NotificationHandler:
             message_text = format_approval_result(
                 workflow_data,
                 approver_username,
+                template_type=workflow_data.get("template_type"),
             )
             
             # 获取要更新的消息列表

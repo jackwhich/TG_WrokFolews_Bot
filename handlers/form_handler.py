@@ -8,6 +8,7 @@ from config.constants import (
     SELECTING_ENVIRONMENT,
     SELECTING_SERVICE,
     INPUTTING_HASH,
+    INPUTTING_ADDRESS,
     INPUTTING_BRANCH,
     INPUTTING_CONTENT,
     CONFIRMING_FORM,
@@ -29,6 +30,14 @@ logger = setup_logger(__name__)
 
 class FormHandler:
     """表单处理器"""
+
+    @staticmethod
+    def _is_address_only(project: str) -> bool:
+        """从配置判断项目是否为仅地址输入流程"""
+        if not project:
+            return False
+        options = Settings.load_options()
+        return bool(options.get("projects", {}).get(project, {}).get("address_only"))
     
     @staticmethod
     async def _get_default_branch(project: str = None) -> str:
@@ -50,9 +59,11 @@ class FormHandler:
                 'project': None,
                 'environment': None,
                 'services': [],
+                'address': [],
                 'hash': None,
                 'branch': default_branch,  # 从配置中获取默认分支
                 'content': None,
+                'template_type': context.user_data.get('template_type') or "default",
             }
         return context.user_data['form_data']
     
@@ -60,20 +71,70 @@ class FormHandler:
     async def _format_submission_data(form_data: dict) -> str:
         """格式化提交数据"""
         services_text = ", ".join(form_data.get('services', []))
+        address_list = form_data.get('address') or []
+        address_text = "\n".join(address_list) if address_list else "无"
+        # 对于链接节点地址项目，如果未提供 hash/content，填充占位
+        hash_val = form_data.get('hash') or "-"
+        content_val = form_data.get('content') or "-"
         # 如果分支为空，从配置中获取默认分支
         branch_text = form_data.get('branch')
         if not branch_text:
             project = form_data.get('project')
             branch_text = await FormHandler._get_default_branch(project) if project else "main"
+
+        # 特例：链接节点地址项目仅展示地址相关信息（不展示分支/服务/hash/content）
+        if FormHandler._is_address_only(form_data.get('project')):
+            return (
+                f"申请时间: {form_data['apply_time']}\n"
+                f"申请项目: {form_data['project']}\n"
+                f"申请环境: {form_data['environment']}\n"
+                f"申请新增地址:\n{address_text}"
+            )
+
         return (
             f"申请时间: {form_data['apply_time']}\n"
             f"申请项目: {form_data['project']}\n"
             f"申请环境: {form_data['environment']}\n"
             f"申请发版分支: {branch_text}\n"
             f"申请部署服务: {services_text}\n"
-            f"申请发版hash: {form_data['hash']}\n"
-            f"申请发版服务内容: {form_data['content']}"
+            f"申请链路地址: {address_text}\n"
+            f"申请发版hash: {hash_val}\n"
+            f"申请发版服务内容: {content_val}"
         )
+
+    @staticmethod
+    def _auto_select_service(project: str, environment: str) -> list:
+        """
+        针对“链接节点地址”项目：如果 services 中只有 uat key，按环境返回对应服务
+        TRC -> 数组索引0，ETH -> 数组索引1
+        """
+        if not project or not environment:
+            return []
+        options = Settings.load_options()
+        project_cfg = options.get("projects", {}).get(project, {})
+        services_cfg = project_cfg.get("services", {})
+        if not isinstance(services_cfg, dict):
+            return []
+        # 优先精确/不区分大小写匹配
+        env_key = None
+        if environment in services_cfg:
+            env_key = environment
+        else:
+            env_lower = environment.lower()
+            for k in services_cfg.keys():
+                if k.lower() == env_lower:
+                    env_key = k
+                    break
+        if env_key:
+            val = services_cfg.get(env_key, [])
+            return val if isinstance(val, list) else []
+        # fallback: 使用 uat key
+        uat_val = services_cfg.get("uat") or services_cfg.get("UAT")
+        if isinstance(uat_val, list):
+            idx = 0 if environment.lower() == "trc" else 1 if environment.lower() == "eth" else 0
+            if idx < len(uat_val):
+                return [uat_val[idx]]
+        return []
     
     @staticmethod
     async def start_form(update: Update, context: ContextTypes.DEFAULT_TYPE, project_name: str = None):
@@ -101,6 +162,9 @@ class FormHandler:
                 
                 # 设置项目
                 form_data['project'] = project_name
+                template_type = "address_only" if FormHandler._is_address_only(project_name) else "default"
+                context.user_data['template_type'] = template_type
+                form_data['template_type'] = template_type
                 logger.info(f"用户 {update.effective_user.id} 通过命令指定项目: {project_name}，申请时间: {apply_time}")
                 
                 # 直接显示环境选择界面（跳过项目选择）
@@ -174,6 +238,9 @@ class FormHandler:
         
         project = query.data.split(":", 1)[1]
         context.user_data['form_data']['project'] = project
+        template_type = "address_only" if FormHandler._is_address_only(project) else "default"
+        context.user_data['template_type'] = template_type
+        context.user_data['form_data']['template_type'] = template_type
         
         logger.info(f"用户 {query.from_user.id} 选择项目: {project}")
         
@@ -242,8 +309,89 @@ class FormHandler:
         if 'form_data' in context.user_data:
             context.user_data['form_data']['services'] = []
         
-        # 显示分支输入（在服务选择之前）
+        project = context.user_data['form_data'].get('project')
+        # 设置默认分支；address_only 项目分支填占位
+        if FormHandler._is_address_only(project):
+            context.user_data['form_data']['branch'] = "-"
+        else:
+            default_branch = await FormHandler._get_default_branch(project)
+            context.user_data['form_data']['branch'] = default_branch
+        # 针对 address_only 项目：自动选择服务并进入地址输入
+        if FormHandler._is_address_only(project):
+            auto_services = FormHandler._auto_select_service(project, environment)
+            if auto_services:
+                context.user_data['form_data']['services'] = auto_services
+            return await FormHandler.show_address_input(update, context)
+        
+        # 其他项目仍按原流程：分支->服务选择
         return await FormHandler.show_branch_input(update, context)
+
+    @staticmethod
+    async def show_address_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """显示地址输入界面（TRC/ETH 都需要输入，每行一个地址）"""
+        form_data = context.user_data.get('form_data', {})
+        services_text = ", ".join(form_data.get('services', [])) if form_data.get('services') else "默认服务"
+        branch_text = form_data.get('branch') or "main"
+        if FormHandler._is_address_only(form_data.get('project')):
+            message = (
+                "📋 申请测试环境服务发版\n\n"
+                f"✅ 申请时间: {form_data.get('apply_time')}\n"
+                f"✅ 申请项目: {form_data.get('project')}\n"
+                f"✅ 申请环境: {form_data.get('environment')}\n"
+                "⏳ 请输入地址（每行一个，多行代表多个地址，勿用逗号）："
+            )
+        else:
+            message = (
+                "📋 申请测试环境服务发版\n\n"
+                f"✅ 申请时间: {form_data.get('apply_time')}\n"
+                f"✅ 申请项目: {form_data.get('project')}\n"
+                f"✅ 申请环境: {form_data.get('environment')}\n"
+                f"✅ 申请发版分支: {branch_text}\n"
+                f"✅ 申请部署服务: {services_text}\n"
+                "⏳ 请输入地址（每行一个，多行代表多个地址，勿用逗号）："
+            )
+        await reply_or_edit(update, message)
+        return INPUTTING_ADDRESS
+
+    @staticmethod
+    async def handle_address_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理地址输入（按换行分割）"""
+        if not update.message or not update.message.text:
+            await update.message.reply_text("❌ 请输入地址，每行一个，勿用逗号")
+            return INPUTTING_ADDRESS
+        raw = update.message.text.strip()
+        lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+        if not lines:
+            await update.message.reply_text("❌ 地址不能为空，请每行一个重新输入")
+            return INPUTTING_ADDRESS
+        await FormHandler._init_form_data(context)
+        context.user_data['form_data']['address'] = lines
+        # 链接节点地址项目：地址后直接进入确认（不需要 hash / 内容）
+        project = context.user_data['form_data'].get('project')
+        if FormHandler._is_address_only(project):
+            context.user_data['form_data'].setdefault('hash', "-")
+            context.user_data['form_data'].setdefault('content', "-")
+            return await FormHandler.show_confirmation(update, context)
+        # 其他项目保持原流程
+        return await FormHandler._proceed_to_hash_input(update, context)
+
+    @staticmethod
+    async def _proceed_to_hash_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """跳转到 Hash 输入步骤（跳过服务选择/分支输入界面）"""
+        form_data = context.user_data.get('form_data', {})
+        services_text = ", ".join(form_data.get('services', [])) if form_data.get('services') else "默认服务"
+        branch_text = form_data.get('branch') or "main"
+        message = (
+            "📋 申请测试环境服务发版\n\n"
+            f"✅ 申请时间: {form_data.get('apply_time')}\n"
+            f"✅ 申请项目: {form_data.get('project')}\n"
+            f"✅ 申请环境: {form_data.get('environment')}\n"
+            f"✅ 申请发版分支: {branch_text}\n"
+            f"✅ 申请部署服务: {services_text}\n"
+            f"⏳ 申请发版hash: 请输入（仅单个hash，不支持逗号分隔）"
+        )
+        await reply_or_edit(update, message)
+        return INPUTTING_HASH
     
     @staticmethod
     async def show_service_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -342,7 +490,6 @@ class FormHandler:
                 await query.answer("请至少选择一个服务", show_alert=True)
                 return SELECTING_SERVICE
             
-            # 完成选择，进入输入hash步骤
             form_data = context.user_data['form_data']
             services_text = ", ".join(selected_services)
             # 从配置中获取默认分支
@@ -350,14 +497,18 @@ class FormHandler:
             if not branch_text:
                 project = form_data.get('project')
                 branch_text = await FormHandler._get_default_branch(project) if project else "main"
+            # 链接节点地址项目：无需 hash，直接确认
+            if FormHandler._is_address_only(form_data.get('project')):
+                form_data.setdefault('hash', "-")
+                form_data.setdefault('content', "-")
+                return await FormHandler.show_confirmation(update, context)
             message = "📋 申请测试环境服务发版\n\n" \
                      f"✅ 申请时间: {form_data['apply_time']}\n" \
                      f"✅ 申请项目: {form_data['project']}\n" \
                      f"✅ 申请环境: {form_data['environment']}\n" \
                      f"✅ 申请发版分支: {branch_text}\n" \
                      f"✅ 申请部署服务: {services_text}\n" \
-                     f"⏳ 申请发版hash: 请输入\n\n" \
-                     f"💡 支持多个hash，用逗号分隔（例如：hash1,hash2,hash3）"
+                     f"⏳ 申请发版hash: 请输入（仅单个hash，不支持逗号分隔）"
             
             await query.edit_message_text(message)
             logger.info(f"用户 {query.from_user.id} 完成服务选择: {selected_services}")
@@ -409,17 +560,10 @@ class FormHandler:
                 await update.message.reply_text("❌ hash不能为空，请重新输入")
                 return INPUTTING_HASH
             
-            # 支持多个hash，用逗号分隔（支持中文和英文逗号）
-            # 先统一替换中文逗号和顿号为英文逗号
-            hash_value_normalized = hash_value.replace('，', ',').replace('、', ',')
-            # 清理空格并验证
-            hash_list = [h.strip() for h in hash_value_normalized.split(',') if h.strip()]
-            if not hash_list:
-                await update.message.reply_text("❌ hash格式错误，请使用逗号分隔多个hash（例如：hash1,hash2）")
+            # 不支持多个hash，若包含逗号提示重输
+            if ',' in hash_value or '，' in hash_value or '、' in hash_value:
+                await update.message.reply_text("❌ 仅支持单个hash，请不要使用逗号分隔多个hash")
                 return INPUTTING_HASH
-            
-            # 保存hash（多个hash用逗号连接）
-            hash_value = ", ".join(hash_list)
             
             # 确保表单数据已初始化
             await FormHandler._init_form_data(context)
@@ -626,7 +770,11 @@ class FormHandler:
                 await update.message.reply_text("❌ 请至少选择一个服务")
                 return ConversationHandler.END
             
-            required_fields = ['apply_time', 'project', 'environment', 'hash', 'branch', 'content']
+            # 针对“链接节点地址”项目，hash/content 可为空（已填充占位）
+            if FormHandler._is_address_only(form_data.get('project')):
+                required_fields = ['apply_time', 'project', 'environment', 'branch']
+            else:
+                required_fields = ['apply_time', 'project', 'environment', 'hash', 'branch', 'content']
             missing_fields = [field for field in required_fields if not form_data.get(field)]
             if missing_fields:
                 logger.error(f"缺少必需字段: {missing_fields}")
@@ -686,6 +834,7 @@ class FormHandler:
                 context=context,
                 submission_data=submission_data,
                 project=form_data.get('project'),  # 传递项目信息
+                template_type=form_data.get('template_type') or context.user_data.get('template_type') or "default",
             )
             
             if success:

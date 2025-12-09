@@ -45,7 +45,7 @@ class SSODataConverter:
             'environment': None,
             'services': [],
             'hashes': [],
-            'branch': 'uat-ebpay',  # 默认分支
+            'branch': None,  # 默认不填，避免误展示
             'content': None
         }
         

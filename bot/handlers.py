@@ -26,6 +26,7 @@ from config.constants import (
     SELECTING_PROJECT,
     SELECTING_ENVIRONMENT,
     SELECTING_SERVICE,
+    INPUTTING_ADDRESS,
     INPUTTING_HASH,
     INPUTTING_BRANCH,
     INPUTTING_CONTENT,
@@ -112,6 +113,9 @@ def setup_handlers(application):
                         FormHandler.handle_service_selection, 
                         pattern=f"^{ACTION_SELECT_SERVICE}:|^{ACTION_CONFIRM_SERVICE_SELECTION}"
                     )
+                ],
+                INPUTTING_ADDRESS: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, FormHandler.handle_address_input)
                 ],
                 INPUTTING_HASH: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, FormHandler.handle_hash_input)

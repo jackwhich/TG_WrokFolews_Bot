@@ -340,7 +340,10 @@ class ApprovalHandler:
                 raise ValueError("无法从提交数据中解析项目名称")
             if not environment:
                 raise ValueError("无法从提交数据中解析环境")
-            if not services:
+            # 对 address_only 项目允许 services 为空
+            options = WorkflowManager.get_project_options()
+            is_address_only = bool(options.get('projects', {}).get(project_name, {}).get('address_only'))
+            if not services and not is_address_only:
                 raise ValueError("未找到要部署的服务列表")
             
             logger.info(f"✅ 解析 SSO 提交数据成功")
@@ -540,7 +543,7 @@ class ApprovalHandler:
             environment = tg_data.get('environment')
             services = tg_data.get('services', [])
             hashes = tg_data.get('hashes', [])
-            branch = tg_data.get('branch', 'uat-ebpay')  # 默认分支
+            branch = tg_data.get('branch') or ''
             
             if not project_name:
                 raise ValueError("无法从提交数据中解析项目名称")
@@ -607,7 +610,20 @@ class ApprovalHandler:
                             break
             
             if not env_key:
-                raise ValueError(f"无法在项目的 services 配置中找到环境 '{environment}' 对应的 key")
+                # 针对 address_only 项目：尝试使用 uat key + 环境索引
+                options = WorkflowManager.get_project_options()
+                project_cfg = options.get('projects', {}).get(project_name, {})
+                is_address_only = bool(project_cfg.get("address_only"))
+                if is_address_only and isinstance(services_config, dict):
+                    uat_val = services_config.get("uat") or services_config.get("UAT")
+                    mapping_idx = 0 if environment.lower() == "trc" else 1 if environment.lower() == "eth" else 0
+                    if isinstance(uat_val, list) and mapping_idx < len(uat_val):
+                        env_key = "uat"
+                        # 覆盖 services 使用对应元素，保持 hashes 对齐
+                        services = [uat_val[mapping_idx]]
+                        logger.info(f"   address_only 项目使用 uat fallback，环境 {environment} -> 服务 {services[0]}")
+                if not env_key:
+                    raise ValueError(f"无法在项目的 services 配置中找到环境 '{environment}' 对应的 key")
             
             logger.info(f"   使用 services 配置中的环境 key: {env_key}")
             
