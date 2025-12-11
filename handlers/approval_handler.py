@@ -525,6 +525,7 @@ class ApprovalHandler:
         from jenkins_ops.monitor import JenkinsMonitor
         from jenkins_ops.notifier import JenkinsNotifier
         from sso.data_converter import parse_tg_submission_data
+        from workflows.models import WorkflowManager
         
         workflow_id = workflow_data.get('workflow_id')
         
@@ -543,7 +544,35 @@ class ApprovalHandler:
             environment = tg_data.get('environment')
             services = tg_data.get('services', [])
             hashes = tg_data.get('hashes', [])
+            address_list = tg_data.get('address', []) or []
             branch = tg_data.get('branch') or ''
+            
+            # address_only 项目：若提交文本未包含服务列表，尝试从配置推导
+            options = WorkflowManager.get_project_options()
+            project_config = options.get('projects', {}).get(project_name, {}) if isinstance(options, dict) else {}
+            services_config = project_config.get('services', {}) if isinstance(project_config, dict) else {}
+            is_address_only = bool(project_config.get('address_only'))
+            if not services and is_address_only and isinstance(services_config, dict):
+                env_lower = environment.lower()
+                derived_services = []
+                # 优先按环境 key（区分/不区分大小写）匹配
+                if environment in services_config and isinstance(services_config.get(environment), list):
+                    derived_services = services_config.get(environment) or []
+                else:
+                    for key, val in services_config.items():
+                        if key.lower() == env_lower and isinstance(val, list):
+                            derived_services = val or []
+                            break
+                # fallback：链路地址项目使用 uat 配置按环境索引映射（TRC/ETH）
+                if not derived_services:
+                    uat_val = services_config.get("uat") or services_config.get("UAT")
+                    if isinstance(uat_val, list):
+                        mapping_idx = 0 if env_lower == "trc" else 1 if env_lower == "eth" else 0
+                        if mapping_idx < len(uat_val):
+                            derived_services = [uat_val[mapping_idx]]
+                if derived_services:
+                    services = derived_services
+                    logger.info(f"✅ address_only 项目自动推导服务列表: {services}")
             
             if not project_name:
                 raise ValueError("无法从提交数据中解析项目名称")
@@ -557,6 +586,8 @@ class ApprovalHandler:
             logger.info(f"   🌍 环境: {environment}")
             logger.info(f"   🚀 服务数量: {len(services)}, 服务列表: {services}")
             logger.info(f"   🔑 Hash 数量: {len(hashes)}, Hash 列表: {hashes}")
+            if address_list:
+                logger.info(f"   📮 地址数量: {len(address_list)}, 地址: {address_list}")
             logger.info(f"   🌿 分支: {branch}")
             
             # 检查该项目的 Jenkins 是否启用
@@ -583,14 +614,18 @@ class ApprovalHandler:
             
             # 验证服务与 hash 数量是否一致
             if len(services) != len(hashes):
-                error_msg = f"服务数量 ({len(services)}) 与 hash 数量 ({len(hashes)}) 不一致，无法触发 Jenkins 构建"
-                logger.error(f"❌ {error_msg} - 工作流ID: {workflow_id}")
-                raise ValueError(error_msg)
+                if is_address_only:
+                    # 链路地址项目允许不填 hash，将地址作为参数传递；若无地址则填空字符串
+                    joined_addrs = "\n".join(address_list) if address_list else ""
+                    hashes = [joined_addrs] * len(services)
+                else:
+                    error_msg = f"服务数量 ({len(services)}) 与 hash 数量 ({len(hashes)}) 不一致，无法触发 Jenkins 构建"
+                    logger.error(f"❌ {error_msg} - 工作流ID: {workflow_id}")
+                    raise ValueError(error_msg)
             
             logger.info(f"✅ 数据验证通过，将为 {len(services)} 个服务触发 Jenkins 构建")
             
             # 获取项目的 services 配置，找到对应环境的 key
-            from workflows.models import WorkflowManager
             options = WorkflowManager.get_project_options()
             project_config = options.get('projects', {}).get(project_name, {})
             services_config = project_config.get('services', {})
@@ -658,8 +693,10 @@ class ApprovalHandler:
                     'gitBranch': branch,    # 分支（从用户输入获取，默认 uat-ebpay）
                 }
                 
-                # 添加 Git Hash（Jenkins 参数名：check_commitID）
-                if git_hash:
+                # address_only 项目将地址传入 check_commitID（Jenkins 页面用于地址输入）
+                if is_address_only and address_list:
+                    build_parameters['check_commitID'] = "\n".join(address_list)
+                elif git_hash:
                     build_parameters['check_commitID'] = git_hash
                 else:
                     logger.warning(f"⚠️ 未找到 Git Hash，Jenkins 构建可能失败 - Job: {job_name}")

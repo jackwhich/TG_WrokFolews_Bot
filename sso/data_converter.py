@@ -45,6 +45,7 @@ class SSODataConverter:
             'environment': None,
             'services': [],
             'hashes': [],
+            'address': [],
             'branch': None,  # 默认不填，避免误展示
             'content': None
         }
@@ -57,6 +58,8 @@ class SSODataConverter:
             'services': r'申请部署服务[：:]\s*([^\n]+)',
             'hash': r'申请发版hash[：:]\s*([^\n]+)',
             'branch': r'申请发版分支[：:]\s*([^\n]+)',
+            'address_new': r'申请新增地址[：:]\s*(.+)',
+            'address_link': r'申请链路地址[：:]\s*(.+)',
             'content': r'申请发版服务内容[：:]\s*(.+?)(?=\n|$)',
         }
         
@@ -78,6 +81,10 @@ class SSODataConverter:
                 elif key == 'branch':
                     # 分支是单个值
                     result['branch'] = value.strip() if value.strip() else 'uat-ebpay'
+                elif key in ('address_new', 'address_link'):
+                    # 地址按行拆分，去掉空行
+                    lines = [ln.strip() for ln in value.splitlines() if ln.strip()]
+                    result['address'].extend(lines)
                 else:
                     result[key] = value
         
