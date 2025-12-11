@@ -72,7 +72,18 @@ DEFAULT_PROXY_PASSWORD: str = "代理密码"  # 可选，无认证代理可不�
   "projects": {
     "EBPAY": {
       "group_ids": [-5036335599],
-      "environments": ["UAT", "GRAY-UAT"],
+      "approvers": {
+        "usernames": ["bob68888"]
+      },
+      "ops_usernames": ["ops_user1", "ops_user2"],
+      "environments": {
+        "UAT": {
+          "default_branch": "uat"
+        },
+        "GRAY-UAT": {
+          "default_branch": "uat-gray"
+        }
+      },
       "services": {
         "UAT": ["pre-admin-export", "pre-adminmanager", "pre-eb-web-api"],
         "GRAY-UAT": ["gray-pre-admin-export", "gray-pre-adminmanager"]
@@ -81,10 +92,12 @@ DEFAULT_PROXY_PASSWORD: str = "代理密码"  # 可选，无认证代理可不�
         "enabled": true,
         "url": "https://jenkins.example.com",
         "username": "",
-        "api_token": "your_jenkins_api_token_here"
+        "api_token": "your_jenkins_api_token_here",
+        "max_concurrent_builds": 5
       },
       "proxy": {
         "enabled": true,
+        "type": "socks5",
         "host": "proxy.example.com",
         "port": 8080,
         "username": "",
@@ -93,7 +106,18 @@ DEFAULT_PROXY_PASSWORD: str = "代理密码"  # 可选，无认证代理可不�
     },
     "项目B": {
       "group_ids": [-1001234567890],
-      "environments": ["dev", "test"],
+      "approvers": {
+        "usernames": []
+      },
+      "ops_usernames": [],
+      "environments": {
+        "dev": {
+          "default_branch": "main"
+        },
+        "test": {
+          "default_branch": "main"
+        }
+      },
       "services": {
         "dev": ["服务B1", "服务B2"],
         "test": ["服务B1", "服务B2"]
@@ -106,6 +130,7 @@ DEFAULT_PROXY_PASSWORD: str = "代理密码"  # 可选，无认证代理可不�
       },
       "proxy": {
         "enabled": false,
+        "type": "socks5",
         "host": "",
         "port": 0,
         "username": "",
@@ -118,15 +143,22 @@ DEFAULT_PROXY_PASSWORD: str = "代理密码"  # 可选，无认证代理可不�
 
 **配置说明**：
 - `group_ids`: 该项目的 Telegram 群组ID列表（支持多个群组）
-- `environments`: 该项目支持的环境列表
+- `approvers`: 审批人配置
+  - `usernames`: 审批人用户名列表（支持多个）
+- `ops_usernames`: OPS 用户列表（支持多个），构建失败时会 @ 这些用户，同时这些用户也可以审批工作流
+- `environments`: 环境配置（支持两种格式）
+  - **对象格式（推荐）**：`{"UAT": {"default_branch": "uat"}, ...}` - 每个环境可配置独立的默认分支
+  - **数组格式（向后兼容）**：`["UAT", "GRAY-UAT"]` - 所有环境使用相同的默认分支（从全局 `default_branch` 获取）
 - `services`: 一个对象，key 是环境名称，value 是该环境对应的服务列表
 - `jenkins`: Jenkins 配置（按项目区分）
   - `enabled`: 是否启用该项目的 Jenkins 集成
   - `url`: Jenkins 服务器地址
   - `username`: Jenkins 用户名（可选，如果使用 Token 认证可以留空）
   - `api_token`: Jenkins API Token（在 Jenkins 用户设置中生成）
+  - `max_concurrent_builds`: 最大并发构建数（可选，默认不限制）
 - `proxy`: 代理配置（按项目区分，用于该项目的 SSO、API、Jenkins 请求）
   - `enabled`: 是否启用该项目的代理
+  - `type`: 代理类型（socks5/socks5h/http/https，默认 socks5）
   - `host`: 代理服务器地址
   - `port`: 代理服务器端口
   - `username`: 代理用户名（可选，无认证代理可不配置）
@@ -172,7 +204,8 @@ python -m bot.bot
 2. 发送 `/deploy_build` 启动表单提交流程
 3. 按步骤选择：
    - 选择项目
-   - 选择环境
+   - 选择环境（选择后会自动设置该环境对应的默认分支）
+   - 选择分支（可使用默认分支或自定义输入）
    - 选择服务（支持多选）
    - 输入发版 hash（多个服务时，hash 与服务一一对应）
    - 输入发版内容
@@ -180,8 +213,10 @@ python -m bot.bot
 
 ### 审批流程
 
-1. 审批人在群组中看到工作流消息
+1. 审批人或 OPS 用户在群组中看到工作流消息
 2. 点击"✅ 通过"或"❌ 拒绝"按钮进行审批
+   - **审批人**：`approvers.usernames` 中配置的用户可以审批
+   - **OPS 用户**：`ops_usernames` 中配置的用户也可以审批（用于运维场景）
 3. 审批完成后：
    - ✅ 提交用户会在Telegram中收到审批结果通知
    - ✅ 群组消息会更新显示审批结果
@@ -224,8 +259,11 @@ python -m bot.bot
    - 构建完成后自动发送 Telegram 通知
 
 3. **通知发送**：
-   - 构建完成后发送简洁的结果通知（成功/失败）
-   - 通知格式：`✅ 工作流已通过 — {job_name} 服务部署完成。`
+   - 构建完成后发送简洁的结果通知（成功/失败/终止/不稳定）
+   - 构建失败时会自动 @ 项目配置的 `ops_usernames` 中的用户
+   - 通知格式：
+     - 成功：`✅ 构建成功\n- {job_name} 服务构建完成。`
+     - 失败：`❌ 构建失败\n- {job_name} 服务构建失败。\n@{ops_user1} @{ops_user2}\n请让运维ops 协助查看错误日志`
    - 所有通知都会发送到原始工作流的群组
 
 **注意**：
@@ -259,8 +297,17 @@ python -m bot.bot
 
 **基础配置**：
 - `BOT_TOKEN`: Telegram Bot Token
-- `APPROVER_USERNAME`: 审批人用户名
+- `APPROVER_USERNAME`: 审批人用户名（全局默认，可在项目配置中覆盖）
 - `GROUP_IDS`: 群组ID（从 `options.json` 自动读取）
+
+**项目配置**（在 `scripts/options.json` 中）：
+- `approvers.usernames`: 项目审批人用户名列表（支持多个）
+- `ops_usernames`: OPS 用户列表（支持多个）
+  - 构建失败时会 @ 这些用户
+  - 这些用户也可以审批工作流
+- `environments`: 环境配置
+  - **对象格式**：`{"UAT": {"default_branch": "uat"}, ...}` - 每个环境可配置独立的默认分支
+  - **数组格式**：`["UAT", "GRAY-UAT"]` - 向后兼容，使用全局 `default_branch`
 
 **SSO 配置**：
 - `SSO_ENABLED`: 是否启用 SSO 集成
@@ -329,7 +376,7 @@ tg_workfolws_bot/
 │   ├── data_format.py    # 数据格式化
 │   ├── monitor.py        # 构建状态监控
 │   └── notifier.py       # SSO 通知器
-├── jenkins/        # Jenkins 集成模块
+├── jenkins_ops/    # Jenkins 集成模块
 │   ├── config.py   # Jenkins 配置
 │   ├── client.py   # Jenkins API 客户端
 │   ├── monitor.py  # 构建状态监控
@@ -364,6 +411,9 @@ tg_workfolws_bot/
 - ✅ Service 名称直接作为 Jenkins Job 名称，无需额外映射配置
 - ✅ 代理配置支持有/无用户名密码两种方式
 - ✅ 不同项目可以使用不同的 Jenkins 服务器和代理设置
+- ✅ **OPS 用户支持**：`ops_usernames` 中的用户既可以审批工作流，也会在构建失败时被 @
+- ✅ **按环境配置默认分支**：`environments` 支持对象格式，每个环境可配置独立的默认分支
+- ✅ **审批权限**：`approvers.usernames` 和 `ops_usernames` 中的用户都可以审批工作流
 
 ## 日志
 
