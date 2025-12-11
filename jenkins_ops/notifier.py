@@ -28,16 +28,22 @@ class JenkinsNotifier:
         try:
             job_name = build_data.get('job_name', 'N/A')
             status = build_data.get('build_status', 'UNKNOWN')
-            # 解析项目名称，获取项目级 OPS 用户
-            submission_data = workflow_data.get('submission_data', '')
-            project_name = None
-            match = re.search(r'申请项目[：:]\s*([^\n]+)', submission_data)
-            if match:
-                project_name = match.group(1).strip()
+            
+            # 获取项目名称（优先从 workflow_data.project，否则从 submission_data 解析）
+            project_name = workflow_data.get('project')
+            if not project_name:
+                submission_data = workflow_data.get('submission_data', '')
+                match = re.search(r'申请项目[：:]\s*([^\n]+)', submission_data)
+                if match:
+                    project_name = match.group(1).strip()
 
+            # 获取项目级 OPS 用户列表
             options = WorkflowManager.get_project_options()
             project_config = options.get('projects', {}).get(project_name or '', {}) if project_name else {}
             ops_usernames = project_config.get('ops_usernames') or []
+            
+            # 调试日志
+            logger.debug(f"Jenkins 通知 - 项目: {project_name}, OPS 用户: {ops_usernames}, 状态: {status}")
             
             # 根据状态构建通知消息
             if status == 'SUCCESS':
