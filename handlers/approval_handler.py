@@ -128,8 +128,6 @@ class ApprovalHandler:
                 logger.info(f"用户 {approver_id} ({approver_username}) 执行拒绝操作（无需权限检查）")
             
             # 将整个审批流程放到后台任务中，立即返回，不阻塞响应
-            import asyncio
-            
             async def _process_approval():
                 """在后台处理整个审批流程"""
                 try:
