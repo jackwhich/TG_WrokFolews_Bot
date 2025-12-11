@@ -537,7 +537,7 @@ class ApprovalHandler:
         """
         import asyncio
         from jenkins_ops.config import JenkinsConfig
-        from jenkins_ops.client import JenkinsClient
+        from jenkins_ops.client import JenkinsBuildLimiter, JenkinsClient
         from jenkins_ops.monitor import JenkinsMonitor
         from jenkins_ops.notifier import JenkinsNotifier
         from sso.data_converter import parse_tg_submission_data
@@ -681,6 +681,12 @@ class ApprovalHandler:
             # 使用项目名称初始化 Jenkins 客户端和监控器（会使用该项目的配置和代理）
             jenkins_client = JenkinsClient(project_name)
             monitor = JenkinsMonitor(project_name)
+            try:
+                max_concurrent_builds = JenkinsConfig.get_max_concurrent_builds(project_name)
+            except ValueError as cfg_err:
+                logger.error(f"❌ {cfg_err}")
+                raise
+            logger.info(f"⚙️ Jenkins 并发上限: {max_concurrent_builds}（从数据库配置）")
             
             # 为每个服务触发构建
             # 注意：Jenkins Job 名称格式为：services字典的key/服务名（如：uat/pre-eb-web-api）
@@ -726,12 +732,13 @@ class ApprovalHandler:
                 # build_parameters['SERVICE'] = service_name
                 # build_parameters['APPROVER'] = approver_username
                 
-                # 触发构建
-                build_result = await asyncio.to_thread(
-                    jenkins_client.trigger_build,
-                    job_name=job_name,
-                    parameters=build_parameters
-                )
+                # 触发构建（受并发上限控制）
+                async with JenkinsBuildLimiter.reserve(project_name, max_concurrent_builds):
+                    build_result = await asyncio.to_thread(
+                        jenkins_client.trigger_build,
+                        job_name=job_name,
+                        parameters=build_parameters
+                    )
                 
                 queue_id = build_result.get('queue_id')
                 next_build_number = build_result.get('next_build_number')

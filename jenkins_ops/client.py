@@ -1,6 +1,8 @@
 """Jenkins API 客户端模块"""
+import asyncio
 import os
 import time
+from contextlib import asynccontextmanager
 from typing import Dict, Optional
 import jenkins
 from jenkins_ops.config import JenkinsConfig
@@ -8,6 +10,44 @@ from utils.proxy import get_proxy_config
 from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+
+class JenkinsBuildLimiter:
+    """控制 Jenkins 并发触发数量的轻量级限流器"""
+
+    _semaphores: Dict[str, asyncio.Semaphore] = {}
+    _lock = asyncio.Lock()
+
+    @classmethod
+    async def _get_semaphore(cls, project_name: str, max_concurrent: int) -> asyncio.Semaphore:
+        """按项目获取/创建信号量"""
+        async with cls._lock:
+            sem = cls._semaphores.get(project_name)
+            if sem is None:
+                # 防御：最少允许 1 并发，避免 0 或负值导致死锁
+                capacity = max(1, max_concurrent)
+                sem = asyncio.Semaphore(capacity)
+                cls._semaphores[project_name] = sem
+                logger.info(f"为项目 {project_name} 初始化 Jenkins 并发上限: {capacity}")
+            return sem
+
+    @classmethod
+    @asynccontextmanager
+    async def reserve(cls, project_name: str, max_concurrent: int):
+        """
+        以 async context 方式申请一个构建槽位
+
+        Args:
+            project_name: 项目名，用于区分不同项目的限流
+            max_concurrent: 该项目允许的最大并发触发数
+        """
+        sem = await cls._get_semaphore(project_name, max_concurrent)
+        logger.debug(f"Jenkins 构建并发控制等待中: {project_name} (上限 {max_concurrent})")
+        await sem.acquire()
+        try:
+            yield
+        finally:
+            sem.release()
 
 
 class JenkinsClient:

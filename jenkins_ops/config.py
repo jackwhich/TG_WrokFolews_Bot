@@ -89,6 +89,29 @@ class JenkinsConfig:
         return (username, token)
     
     @classmethod
+    def get_max_concurrent_builds(cls, project_name: str) -> int:
+        """
+        获取允许的最大并发构建数
+
+        Args:
+            project_name: 项目名称
+        """
+        jenkins_config = cls._get_project_config(project_name)
+        if "max_concurrent_builds" not in jenkins_config:
+            raise ValueError(f"项目 {project_name} 未配置 max_concurrent_builds（请在数据库/JSON 中设置）")
+
+        value = jenkins_config.get("max_concurrent_builds")
+        try:
+            parsed = int(value)
+            if parsed <= 0:
+                raise ValueError
+            return parsed
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"项目 {project_name} 的 max_concurrent_builds 配置无效，请在数据库/JSON 中设置为正整数"
+            )
+    
+    @classmethod
     def validate(cls, project_name: str) -> bool:
         """
         验证指定项目的 Jenkins 配置是否完整
