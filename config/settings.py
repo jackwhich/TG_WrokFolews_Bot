@@ -110,10 +110,23 @@ class Settings:
     
     @classmethod
     def get_environments(cls, project: str) -> List[str]:
-        """根据项目获取环境列表"""
+        """
+        根据项目获取环境列表
+        
+        支持两种格式：
+        1. 数组格式（旧格式，向后兼容）: ["UAT", "GRAY-UAT"]
+        2. 对象格式（新格式，包含默认分支）: {"UAT": {"default_branch": "uat"}, ...}
+        """
         options = cls.load_options()
         project_data = options.get("projects", {}).get(project, {})
-        return project_data.get("environments", [])
+        environments = project_data.get("environments", [])
+        
+        # 如果是对象格式，提取键列表
+        if isinstance(environments, dict):
+            return list(environments.keys())
+        
+        # 如果是数组格式，直接返回（向后兼容）
+        return environments if isinstance(environments, list) else []
     
     @classmethod
     def get_services(cls, project: str, environment: str = None) -> List[str]:
@@ -155,12 +168,18 @@ class Settings:
         return services if isinstance(services, list) else []
     
     @classmethod
-    def get_default_branch(cls, project: str, default: str = "main") -> str:
+    def get_default_branch(cls, project: str, environment: str = None, default: str = "main") -> str:
         """
-        根据项目获取默认分支
+        根据项目和环境获取默认分支
+        
+        优先级：
+        1. environments 对象格式中的 default_branch（如果 environments 是对象且包含该环境）
+        2. default_branches 对象中的配置（向后兼容）
+        3. 全局 default_branch
         
         Args:
             project: 项目名称
+            environment: 环境名称（可选）
             default: 如果项目未配置默认分支，返回的默认值
         
         Returns:
@@ -168,6 +187,34 @@ class Settings:
         """
         options = cls.load_options()
         project_data = options.get("projects", {}).get(project, {})
+        
+        # 如果提供了环境，优先从 environments 对象中获取
+        if environment:
+            environments = project_data.get("environments", {})
+            if isinstance(environments, dict) and environment in environments:
+                env_config = environments[environment]
+                # 如果是对象格式，获取 default_branch
+                if isinstance(env_config, dict):
+                    branch = env_config.get("default_branch")
+                    if branch:
+                        return branch
+                # 如果是字符串格式（简化格式），直接返回
+                elif isinstance(env_config, str):
+                    return env_config
+            
+            # 向后兼容：从 default_branches 中获取
+            default_branches = project_data.get("default_branches", {})
+            if isinstance(default_branches, dict):
+                # 先尝试精确匹配
+                if environment in default_branches:
+                    return default_branches[environment]
+                # 尝试不区分大小写匹配
+                env_lower = environment.lower()
+                for env_key, branch_value in default_branches.items():
+                    if env_key.lower() == env_lower:
+                        return branch_value
+        
+        # 回退到全局 default_branch
         return project_data.get("default_branch", default)
     
     @classmethod

@@ -40,10 +40,10 @@ class FormHandler:
         return bool(options.get("projects", {}).get(project, {}).get("address_only"))
     
     @staticmethod
-    async def _get_default_branch(project: str = None) -> str:
-        """获取默认分支（从配置中读取）"""
+    async def _get_default_branch(project: str = None, environment: str = None) -> str:
+        """获取默认分支（从配置中读取，支持按环境区分）"""
         if project:
-            return await asyncio.to_thread(Settings.get_default_branch, project, "main")
+            return await asyncio.to_thread(Settings.get_default_branch, project, environment, "main")
         return "main"  # 如果没有项目，返回通用默认值
     
     @staticmethod
@@ -80,7 +80,8 @@ class FormHandler:
         branch_text = form_data.get('branch')
         if not branch_text:
             project = form_data.get('project')
-            branch_text = await FormHandler._get_default_branch(project) if project else "main"
+            environment = form_data.get('environment')
+            branch_text = await FormHandler._get_default_branch(project, environment) if project else "main"
 
         # 特例：链接节点地址项目仅展示地址相关信息（不展示分支/服务/hash/content）
         if FormHandler._is_address_only(form_data.get('project')):
@@ -314,7 +315,7 @@ class FormHandler:
         if FormHandler._is_address_only(project):
             context.user_data['form_data']['branch'] = "-"
         else:
-            default_branch = await FormHandler._get_default_branch(project)
+            default_branch = await FormHandler._get_default_branch(project, environment)
             context.user_data['form_data']['branch'] = default_branch
         # 针对 address_only 项目：自动选择服务并进入地址输入
         if FormHandler._is_address_only(project):
@@ -462,7 +463,8 @@ class FormHandler:
         # 从配置中获取默认分支
         branch_text = form_data.get('branch')
         if not branch_text:
-            branch_text = await FormHandler._get_default_branch(project)
+            environment = form_data.get('environment')
+            branch_text = await FormHandler._get_default_branch(project, environment)
         
         message = "📋 申请测试环境服务发版\n\n" \
                  f"✅ 申请时间: {form_data['apply_time']}\n" \
@@ -496,7 +498,8 @@ class FormHandler:
             branch_text = form_data.get('branch')
             if not branch_text:
                 project = form_data.get('project')
-                branch_text = await FormHandler._get_default_branch(project) if project else "main"
+                environment = form_data.get('environment')
+                branch_text = await FormHandler._get_default_branch(project, environment) if project else "main"
             # 链接节点地址项目：无需 hash，直接确认
             if FormHandler._is_address_only(form_data.get('project')):
                 form_data.setdefault('hash', "-")
@@ -587,8 +590,9 @@ class FormHandler:
         try:
             form_data = context.user_data.get('form_data', {})
             project = form_data.get('project')
-            # 从配置中获取默认分支
-            default_branch = await FormHandler._get_default_branch(project) if project else "main"
+            environment = form_data.get('environment')
+            # 从配置中获取默认分支（根据环境）
+            default_branch = await FormHandler._get_default_branch(project, environment) if project else "main"
             branch_text = form_data.get('branch', default_branch)
             
             # 创建键盘，提供默认选项和自定义输入
@@ -632,7 +636,8 @@ class FormHandler:
                     await FormHandler._init_form_data(context)
                     form_data = context.user_data['form_data']
                     project = form_data.get('project')
-                    default_branch = await FormHandler._get_default_branch(project) if project else "main"
+                    environment = form_data.get('environment')
+                    default_branch = await FormHandler._get_default_branch(project, environment) if project else "main"
                     context.user_data['form_data']['branch'] = default_branch
                     logger.info(f"用户 {query.from_user.id} 选择默认分支: {default_branch}")
                     
@@ -693,7 +698,8 @@ class FormHandler:
             branch_text = form_data.get('branch')
             if not branch_text:
                 project = form_data.get('project')
-                branch_text = await FormHandler._get_default_branch(project) if project else "main"
+                environment = form_data.get('environment')
+                branch_text = await FormHandler._get_default_branch(project, environment) if project else "main"
             message = "📋 申请测试环境服务发版\n\n" \
                      f"✅ 申请时间: {form_data.get('apply_time', 'N/A')}\n" \
                      f"✅ 申请项目: {form_data.get('project', 'N/A')}\n" \
