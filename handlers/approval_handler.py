@@ -1,4 +1,5 @@
 """审批处理器"""
+import asyncio
 from telegram import Update
 from telegram.ext import ContextTypes
 from workflows.models import WorkflowManager
@@ -49,8 +50,16 @@ class ApprovalHandler:
             
             # 只有"通过"操作需要权限检查，"拒绝"操作所有人都可以执行（相当于取消按钮）
             if action == ACTION_APPROVE:
-                # 如果配置了审批人限制，则验证权限（在 answer 之后检查，因为按钮已经消失了）
-                # 检查是否配置了审批人限制（从数据库读取）
+                # 按项目读取审批人配置（每个项目可配置不同审批人）
+                workflow_for_permission = await asyncio.to_thread(WorkflowManager.get_workflow, workflow_id)
+                if not workflow_for_permission:
+                    logger.warning(f"审批权限检查时未找到工作流 - ID: {workflow_id}")
+                    await query.answer("❌ 工作流不存在或已过期", show_alert=True)
+                    return
+                project_for_permission = workflow_for_permission.get("project")
+                approver_cfg = Settings.get_approver_config(project_for_permission)
+                
+                # 兼容旧的应用级配置（如果项目未配置审批人则回退）
                 approver_username_config = WorkflowManager.get_app_config("APPROVER_USERNAME", "")
                 approver_user_id_str = WorkflowManager.get_app_config("APPROVER_USER_ID", "")
                 try:
@@ -58,36 +67,45 @@ class ApprovalHandler:
                 except ValueError:
                     approver_user_id_config = 0
                 
-                is_restricted = approver_user_id_config != 0 or bool(approver_username_config)
+                configured_usernames = list(approver_cfg.get("usernames", []))
+                configured_user_ids = list(approver_cfg.get("user_ids", []))
+                
+                if approver_username_config and not configured_usernames:
+                    configured_usernames.append(approver_username_config)
+                if approver_user_id_config:
+                    configured_user_ids.append(approver_user_id_config)
+                
+                is_restricted = bool(configured_user_ids or configured_usernames)
                 
                 if is_restricted:
                     has_permission = False
                     
                     # 优先使用用户名验证（更直观）
-                    if approver_username_config:
-                        # 去掉 @ 符号（如果有）
-                        configured_username = approver_username_config.lstrip('@')
+                    if configured_usernames:
                         user_username = (query.from_user.username or "").lower()
-                        if user_username == configured_username.lower():
-                            has_permission = True
-                            logger.info(f"审批权限验证通过（通过用户名） - 用户名: {approver_username}")
+                        for cfg_name in configured_usernames:
+                            configured_username = str(cfg_name).lstrip('@').lower()
+                            if user_username == configured_username:
+                                has_permission = True
+                                logger.info(f"审批权限验证通过（通过用户名） - 用户名: {approver_username}")
+                                break
                     
                     # 如果用户名验证失败，且配置了用户ID，则使用用户ID验证
-                    if not has_permission and approver_user_id_config != 0:
-                        if approver_id == approver_user_id_config:
+                    if not has_permission and configured_user_ids:
+                        if approver_id in configured_user_ids:
                             has_permission = True
                             logger.info(f"审批权限验证通过（通过用户ID） - 用户ID: {approver_id}")
                     
                     # 如果都没有权限，拒绝审批并显示提示
                     if not has_permission:
                         configured_info = []
-                        if approver_username_config:
-                            configured_info.append(f"用户名: @{approver_username_config}")
-                        if approver_user_id_config != 0:
-                            configured_info.append(f"用户ID: {approver_user_id_config}")
+                        if configured_usernames:
+                            configured_info.append("用户名: " + ", ".join([f"@{u}" for u in configured_usernames]))
+                        if configured_user_ids:
+                            configured_info.append("用户ID: " + ", ".join(map(str, configured_user_ids)))
                         logger.warning(
                             f"用户 {approver_id} ({approver_username}) 尝试审批但无权限，"
-                            f"配置的审批人: {', '.join(configured_info)}"
+                            f"配置的审批人: {', '.join(configured_info) if configured_info else '未配置'}"
                         )
                         # 快速响应按钮点击（不显示弹窗）
                         await query.answer()

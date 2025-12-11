@@ -51,10 +51,16 @@ class NotificationHandler:
         try:
             logger.info(f"开始发送工作流 {workflow_id} 到群组...")
             
-            # 格式化消息（使用配置的审批人用户名，或默认值）
+            # 根据项目选择群组ID（必须提供项目信息）
+            project = workflow_data.get('project')
+            if not project:
+                logger.error(f"工作流 {workflow_id} 缺少项目信息，无法确定发送到哪个群组")
+                raise ValueError("工作流缺少项目信息，无法确定发送到哪个群组")
+            
+            # 格式化消息（使用项目配置的审批人用户名，或默认值）
             # 去掉 @ 符号（如果有），因为消息模板中已经包含了 @
             from workflows.models import WorkflowManager
-            approver_username = WorkflowManager.get_app_config("APPROVER_USERNAME", "") or "审批人"
+            approver_username = Settings.get_primary_approver_username(project, default="") or WorkflowManager.get_app_config("APPROVER_USERNAME", "") or "审批人"
             approver_username = approver_username.lstrip('@')  # 去掉开头的 @ 符号
             message_text = format_workflow_message(
                 workflow_data,
@@ -67,12 +73,6 @@ class NotificationHandler:
             keyboard = NotificationHandler._create_approval_keyboard(
                 workflow_data["workflow_id"]
             )
-            
-            # 根据项目选择群组ID（必须提供项目信息）
-            project = workflow_data.get('project')
-            if not project:
-                logger.error(f"工作流 {workflow_id} 缺少项目信息，无法确定发送到哪个群组")
-                raise ValueError("工作流缺少项目信息，无法确定发送到哪个群组")
             
             # 从项目配置中获取群组ID（如果未配置会抛出异常）
             try:
@@ -127,7 +127,13 @@ class NotificationHandler:
             
             # 使用实际审批人信息（自动捕获的）
             from workflows.models import WorkflowManager
-            approver_username = workflow_data.get('approver_username', WorkflowManager.get_app_config("APPROVER_USERNAME", "") or '审批人')
+            project = workflow_data.get('project')
+            approver_username = (
+                workflow_data.get('approver_username')
+                or Settings.get_primary_approver_username(project, default="")
+                or WorkflowManager.get_app_config("APPROVER_USERNAME", "")
+                or '审批人'
+            )
             
             # 格式化审批结果消息
             message_text = format_approval_result(

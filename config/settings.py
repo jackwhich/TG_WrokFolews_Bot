@@ -211,6 +211,59 @@ class Settings:
         raise ValueError(f"项目 '{project}' 的 group_ids 配置格式不正确")
     
     @classmethod
+    def get_approver_config(cls, project: str) -> Dict[str, List]:
+        """
+        获取项目级审批人配置（用户名和用户ID）
+        
+        Returns:
+            {"usernames": [...], "user_ids": [...]}
+        """
+        options = cls.load_options()
+        project_data = options.get("projects", {}).get(project, {}) if project else {}
+        approvers_cfg = project_data.get("approvers", {})
+        
+        usernames_raw = []
+        user_ids_raw = []
+        
+        if isinstance(approvers_cfg, dict):
+            usernames_raw = approvers_cfg.get("usernames") or approvers_cfg.get("username") or []
+            user_ids_raw = approvers_cfg.get("user_ids") or approvers_cfg.get("user_id") or []
+        elif isinstance(approvers_cfg, (list, str, int)):
+            usernames_raw = approvers_cfg
+        # 兼容字符串单值
+        if isinstance(usernames_raw, (str, int)):
+            usernames_raw = [usernames_raw]
+        if isinstance(user_ids_raw, (str, int)):
+            user_ids_raw = [user_ids_raw]
+        
+        usernames: List[str] = []
+        if isinstance(usernames_raw, list):
+            for name in usernames_raw:
+                name_str = str(name).strip()
+                if name_str:
+                    usernames.append(name_str.lstrip("@"))
+        user_ids: List[int] = []
+        if isinstance(user_ids_raw, list):
+            for uid in user_ids_raw:
+                try:
+                    user_ids.append(int(uid))
+                except (ValueError, TypeError):
+                    continue
+        
+        # 去重保持顺序
+        usernames = list(dict.fromkeys(usernames))
+        user_ids = list(dict.fromkeys(user_ids))
+        return {"usernames": usernames, "user_ids": user_ids}
+    
+    @classmethod
+    def get_primary_approver_username(cls, project: str, default: str = "审批人") -> str:
+        """获取项目优先展示的审批人用户名"""
+        approver_cfg = cls.get_approver_config(project)
+        if approver_cfg["usernames"]:
+            return approver_cfg["usernames"][0]
+        return default
+    
+    @classmethod
     def validate(cls):
         """验证必要的配置项"""
         # 检查 BOT_TOKEN
