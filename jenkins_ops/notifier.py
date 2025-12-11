@@ -28,31 +28,25 @@ class JenkinsNotifier:
         try:
             job_name = build_data.get('job_name', 'N/A')
             status = build_data.get('build_status', 'UNKNOWN')
-            approver_username = workflow_data.get('approver_username', '')
+            # 不再 @ 指定用户，统一提示运维查看
             
             # 根据状态构建通知消息
             if status == 'SUCCESS':
-                message = "✅ 工作流已通过———..\n"
-                message += f"- {job_name} 服务部署完成。"
+                message = "✅ 构建成功\n"
+                message += f"- {job_name} 服务构建完成。"
             elif status == 'FAILURE':
-                message = "❌ 工作流已通过 ———..\n"
+                message = "❌ 构建失败\n"
                 message += f"- {job_name} 服务构建失败。\n"
-                if approver_username:
-                    message += f"@{approver_username} 请查看日志\n"
-                message += "请运维ops 查看错误日志"
+                message += "请让运维ops 协助查看错误日志"
             elif status == 'ABORTED':
-                message = "✅ 工作流已通过———..\n"
-                message += f"⚠️ 工作流已通过 - {job_name} 服务构建已终止。"
-                if approver_username:
-                    message += f"\n@{approver_username} 请查看日志"
+                message = "⚠️ 构建已终止\n"
+                message += f"- {job_name} 服务构建已被终止。"
             elif status == 'UNSTABLE':
-                message = "✅ 工作流已通过———..\n"
-                message += f"⚠️ 工作流已通过 - {job_name} 服务构建不稳定（可能有测试失败）。"
-                if approver_username:
-                    message += f"\n@{approver_username} 请查看日志"
+                message = "⚠️ 构建不稳定\n"
+                message += f"- {job_name} 服务构建不稳定（可能有测试失败）。"
             else:
-                message = "✅ 工作流已通过———..\n"
-                message += f"❓ 工作流已通过 - {job_name} 服务构建状态: {status}"
+                message = "❓ 构建状态未知\n"
+                message += f"- {job_name} 服务构建状态: {status}"
             
             # 发送到工作流的原始群组
             await JenkinsNotifier._send_to_workflow_groups(context, workflow_data, message)

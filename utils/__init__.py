@@ -2,7 +2,12 @@
 from .logger import setup_logger
 from .formatter import format_workflow_message, format_approval_result
 from .helpers import generate_workflow_id, get_current_timestamp
-from .proxy import get_proxy_config, get_proxy_url
+from .proxy import (
+    get_proxy_config,
+    get_proxy_url,
+    get_proxy_for_httpx,
+    is_proxy_enabled,
+)
 
 __all__ = [
     'setup_logger',
@@ -12,5 +17,7 @@ __all__ = [
     'get_current_timestamp',
     'get_proxy_config',
     'get_proxy_url',
+    'get_proxy_for_httpx',
+    'is_proxy_enabled',
 ]
 
