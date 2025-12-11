@@ -59,6 +59,13 @@ class ApprovalHandler:
                 project_for_permission = workflow_for_permission.get("project")
                 approver_cfg = Settings.get_approver_config(project_for_permission)
                 
+                # 获取项目配置中的 OPS 用户列表
+                options = WorkflowManager.get_project_options()
+                project_config = options.get("projects", {}).get(project_for_permission or "", {}) if project_for_permission else {}
+                ops_usernames = project_config.get("ops_usernames", []) or []
+                # 清理 OPS 用户名（去掉 @ 符号并转换为小写用于比较）
+                ops_usernames_clean = [str(u).lstrip('@').strip() for u in ops_usernames if u]
+                
                 # 兼容旧的应用级配置（如果项目未配置审批人则回退）
                 approver_username_config = WorkflowManager.get_app_config("APPROVER_USERNAME", "")
                 approver_user_id_str = WorkflowManager.get_app_config("APPROVER_USER_ID", "")
@@ -67,12 +74,20 @@ class ApprovalHandler:
                 except ValueError:
                     approver_user_id_config = 0
                 
+                # 合并审批人和 OPS 用户列表
                 configured_usernames = list(approver_cfg.get("usernames", []))
                 configured_user_ids = list(approver_cfg.get("user_ids", []))
                 
-                if approver_username_config and not configured_usernames:
-                    configured_usernames.append(approver_username_config)
-                if approver_user_id_config:
+                # 添加 OPS 用户名到审批人列表（去重）
+                for ops_user in ops_usernames_clean:
+                    if ops_user not in configured_usernames:
+                        configured_usernames.append(ops_user)
+                
+                if approver_username_config:
+                    approver_username_clean = str(approver_username_config).lstrip('@').strip()
+                    if approver_username_clean not in configured_usernames:
+                        configured_usernames.append(approver_username_clean)
+                if approver_user_id_config and approver_user_id_config not in configured_user_ids:
                     configured_user_ids.append(approver_user_id_config)
                 
                 is_restricted = bool(configured_user_ids or configured_usernames)
@@ -99,13 +114,17 @@ class ApprovalHandler:
                     # 如果都没有权限，拒绝审批并显示提示
                     if not has_permission:
                         configured_info = []
-                        if configured_usernames:
-                            configured_info.append("用户名: " + ", ".join([f"@{u}" for u in configured_usernames]))
+                        # 分别显示审批人和 OPS 用户
+                        approver_usernames = approver_cfg.get("usernames", [])
+                        if approver_usernames:
+                            configured_info.append("审批人: " + ", ".join([f"@{u}" for u in approver_usernames]))
+                        if ops_usernames_clean:
+                            configured_info.append("OPS: " + ", ".join([f"@{u}" for u in ops_usernames_clean]))
                         if configured_user_ids:
                             configured_info.append("用户ID: " + ", ".join(map(str, configured_user_ids)))
                         logger.warning(
                             f"用户 {approver_id} ({approver_username}) 尝试审批但无权限，"
-                            f"配置的审批人: {', '.join(configured_info) if configured_info else '未配置'}"
+                            f"配置的审批人/OPS: {', '.join(configured_info) if configured_info else '未配置'}"
                         )
                         # 快速响应按钮点击（不显示弹窗）
                         await query.answer()

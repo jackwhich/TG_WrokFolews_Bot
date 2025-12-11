@@ -28,7 +28,16 @@ class JenkinsNotifier:
         try:
             job_name = build_data.get('job_name', 'N/A')
             status = build_data.get('build_status', 'UNKNOWN')
-            # 不再 @ 指定用户，统一提示运维查看
+            # 解析项目名称，获取项目级 OPS 用户
+            submission_data = workflow_data.get('submission_data', '')
+            project_name = None
+            match = re.search(r'申请项目[：:]\s*([^\n]+)', submission_data)
+            if match:
+                project_name = match.group(1).strip()
+
+            options = WorkflowManager.get_project_options()
+            project_config = options.get('projects', {}).get(project_name or '', {}) if project_name else {}
+            ops_usernames = project_config.get('ops_usernames') or []
             
             # 根据状态构建通知消息
             if status == 'SUCCESS':
@@ -37,6 +46,10 @@ class JenkinsNotifier:
             elif status == 'FAILURE':
                 message = "❌ 构建失败\n"
                 message += f"- {job_name} 服务构建失败。\n"
+                if ops_usernames:
+                    mentions = " ".join([f"@{u}" for u in ops_usernames if u])
+                    if mentions:
+                        message += f"{mentions}\n"
                 message += "请让运维ops 协助查看错误日志"
             elif status == 'ABORTED':
                 message = "⚠️ 构建已终止\n"
