@@ -208,7 +208,8 @@ class JenkinsMonitor:
                                 workflow_data=workflow_data,
                                 build_data={
                                     'job_name': build_record.get('job_name', job_name),
-                                    'build_status': build_status
+                                    'build_status': build_status,
+                                    'build_number': build_number
                                 }
                             )
                             # 标记为已通知
@@ -226,7 +227,7 @@ class JenkinsMonitor:
             else:
                 logger.warning(f"⚠️ 构建状态异常，不发送通知 - 工作流ID: {workflow_id}, Job: {job_name}, Build: {build_number}, 状态: {build_status}")
             
-            logger.info(f"构建监控完成 - 工作流ID: {workflow_id}, Job: {job_name}, Build: {build_number}, 状态: {build_status}")
+            logger.info(f"✅ 构建监控完成 - 工作流ID: {workflow_id}, Job: {job_name}, Build: #{build_number}, 状态: {build_status}")
             
         except Exception as e:
             logger.error(f"监控构建状态时发生异常 - 工作流ID: {workflow_id}, Job: {job_name}, Build: {build_number}, 错误: {e}", exc_info=True)

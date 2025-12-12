@@ -414,7 +414,7 @@ class FormHandler:
             f"✅ 申请环境: {form_data.get('environment')}\n"
             f"✅ 申请发版分支: {branch_text}\n"
             f"✅ 申请部署服务: {services_text}\n"
-            f"⏳ 申请发版hash: 请输入（仅单个hash，不支持逗号分隔）"
+            f"⏳ 申请发版hash: 请输入（支持多个hash，用逗号分隔，与服务一一对应）"
         )
         await reply_or_edit(update, message)
         return INPUTTING_HASH
@@ -548,7 +548,7 @@ class FormHandler:
                      f"✅ 申请环境: {form_data['environment']}\n" \
                      f"✅ 申请发版分支: {branch_text}\n" \
                      f"✅ 申请部署服务: {services_text}\n" \
-                     f"⏳ 申请发版hash: 请输入（仅单个hash，不支持逗号分隔）"
+                     f"⏳ 申请发版hash: 请输入（支持多个hash，用逗号分隔，与服务一一对应）"
             
             await query.edit_message_text(message)
             logger.info(f"用户 {query.from_user.id} 完成服务选择: {selected_services}")
@@ -600,14 +600,14 @@ class FormHandler:
                 await update.message.reply_text("❌ hash不能为空，请重新输入")
                 return INPUTTING_HASH
             
-            # 不支持多个hash，若包含逗号提示重输
-            if ',' in hash_value or '，' in hash_value or '、' in hash_value:
-                await update.message.reply_text("❌ 仅支持单个hash，请不要使用逗号分隔多个hash")
-                return INPUTTING_HASH
+            # 支持多个hash（逗号分隔），统一处理中文和英文逗号
+            # 将中文逗号和顿号替换为英文逗号
+            hash_value_normalized = hash_value.replace('，', ',').replace('、', ',')
             
             # 确保表单数据已初始化
             await FormHandler._init_form_data(context)
-            context.user_data['form_data']['hash'] = hash_value
+            # 存储原始输入（后续解析时会自动拆分成列表）
+            context.user_data['form_data']['hash'] = hash_value_normalized
             logger.info(f"hash已保存: {hash_value}, 完整表单数据: {context.user_data['form_data']}")
             
             # 显示输入发版内容界面（hash 输入后直接到内容输入）

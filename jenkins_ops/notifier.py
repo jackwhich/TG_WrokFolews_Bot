@@ -45,27 +45,36 @@ class JenkinsNotifier:
             # 调试日志
             logger.debug(f"Jenkins 通知 - 项目: {project_name}, OPS 用户: {ops_usernames}, 状态: {status}")
             
+            # 获取构建编号（如果有）
+            build_number = build_data.get('build_number')
+            build_number_text = f" #{build_number}" if build_number else ""
+            
             # 根据状态构建通知消息
             if status == 'SUCCESS':
-                message = "✅ 构建成功\n"
-                message += f"- {job_name} 服务构建完成。"
+                message = "✅ **构建成功**\n\n"
+                message += f"📦 服务: `{job_name}`{build_number_text}\n"
+                message += f"✅ 状态: 构建完成"
             elif status == 'FAILURE':
-                message = "❌ 构建失败\n"
-                message += f"- {job_name} 服务构建失败。\n"
+                message = "❌ **构建失败**\n\n"
+                message += f"📦 服务: `{job_name}`{build_number_text}\n"
+                message += f"❌ 状态: 构建失败\n\n"
                 if ops_usernames:
                     mentions = " ".join([f"@{u}" for u in ops_usernames if u])
                     if mentions:
                         message += f"{mentions}\n"
                 message += "请让运维ops 协助查看错误日志"
             elif status == 'ABORTED':
-                message = "⚠️ 构建已终止\n"
-                message += f"- {job_name} 服务构建已被终止。"
+                message = "⚠️ **构建已终止**\n\n"
+                message += f"📦 服务: `{job_name}`{build_number_text}\n"
+                message += f"⚠️ 状态: 构建已被终止"
             elif status == 'UNSTABLE':
-                message = "⚠️ 构建不稳定\n"
-                message += f"- {job_name} 服务构建不稳定（可能有测试失败）。"
+                message = "⚠️ **构建不稳定**\n\n"
+                message += f"📦 服务: `{job_name}`{build_number_text}\n"
+                message += f"⚠️ 状态: 构建不稳定（可能有测试失败）"
             else:
-                message = "❓ 构建状态未知\n"
-                message += f"- {job_name} 服务构建状态: {status}"
+                message = "❓ **构建状态未知**\n\n"
+                message += f"📦 服务: `{job_name}`{build_number_text}\n"
+                message += f"❓ 状态: {status}"
             
             # 发送到工作流的原始群组
             await JenkinsNotifier._send_to_workflow_groups(context, workflow_data, message)
