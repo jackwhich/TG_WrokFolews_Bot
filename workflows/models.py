@@ -1456,6 +1456,73 @@ class WorkflowManager:
         return None
     
     @classmethod
+    def get_jenkins_build_by_id(cls, build_id: str) -> Optional[Dict]:
+        """
+        根据构建ID获取 Jenkins 构建记录
+        
+        Args:
+            build_id: 构建ID
+            
+        Returns:
+            Jenkins 构建记录字典，如果不存在返回 None
+        """
+        conn = cls._get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT * FROM jenkins_builds 
+            WHERE build_id = ?
+        """, (build_id,))
+        
+        row = cursor.fetchone()
+        if row:
+            data = dict(row)
+            # 解析 JSON 字段
+            if data.get('build_parameters'):
+                try:
+                    data['build_parameters'] = json.loads(data['build_parameters'])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            return data
+        
+        return None
+    
+    @classmethod
+    def get_jenkins_build_by_job_and_number(cls, workflow_id: str, job_name: str, build_number: int) -> Optional[Dict]:
+        """
+        根据工作流ID、Job名称和构建编号获取 Jenkins 构建记录
+        
+        Args:
+            workflow_id: 工作流ID
+            job_name: Jenkins Job 名称
+            build_number: 构建编号
+            
+        Returns:
+            Jenkins 构建记录字典，如果不存在返回 None
+        """
+        conn = cls._get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT * FROM jenkins_builds 
+            WHERE workflow_id = ? AND job_name = ? AND build_number = ?
+            LIMIT 1
+        """, (workflow_id, job_name, build_number))
+        
+        row = cursor.fetchone()
+        if row:
+            data = dict(row)
+            # 解析 JSON 字段
+            if data.get('build_parameters'):
+                try:
+                    data['build_parameters'] = json.loads(data['build_parameters'])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            return data
+        
+        return None
+    
+    @classmethod
     def get_pending_jenkins_notifications(cls, limit: Optional[int] = 100) -> List[Dict]:
         """
         获取待通知的 Jenkins 构建（构建完成但未通知，优化查询性能）

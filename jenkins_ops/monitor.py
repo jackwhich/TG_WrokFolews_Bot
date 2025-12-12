@@ -1,5 +1,6 @@
 """Jenkins 构建状态监控模块"""
 import asyncio
+import json
 import time
 from typing import Dict, Optional
 from jenkins_ops.client import JenkinsClient
@@ -196,22 +197,51 @@ class JenkinsMonitor:
                     # 获取工作流数据
                     workflow_data = await asyncio.to_thread(WorkflowManager.get_workflow, workflow_id)
                     if workflow_data:
-                        # 获取最新的构建数据
-                        build_record = await asyncio.to_thread(
-                            WorkflowManager.get_jenkins_build_by_workflow,
-                            workflow_id
-                        )
-                        if build_record:
-                            # 发送通知到 TG 群
-                            await JenkinsNotifier.notify_build_status(
-                                context=context,
-                                workflow_data=workflow_data,
-                                build_data={
-                                    'job_name': build_record.get('job_name', job_name),
-                                    'build_status': build_status,
-                                    'build_number': build_number
-                                }
+                        # 从构建记录中获取 hash（如果有）
+                        git_hash = None
+                        if build_id:
+                            # 重新获取构建记录以获取最新的 build_parameters
+                            build_record = await asyncio.to_thread(
+                                WorkflowManager.get_jenkins_build_by_id,
+                                build_id
                             )
+                            if build_record and build_record.get('build_parameters'):
+                                build_params = build_record.get('build_parameters')
+                                if isinstance(build_params, str):
+                                    try:
+                                        build_params = json.loads(build_params)
+                                    except:
+                                        pass
+                                if isinstance(build_params, dict):
+                                    git_hash = build_params.get('check_commitID')
+                        
+                        # 如果构建记录中没有 hash，尝试从 submission_data 中解析
+                        if not git_hash:
+                            from sso.data_converter import SSODataConverter
+                            submission_data = workflow_data.get('submission_data', '')
+                            if submission_data:
+                                tg_data = SSODataConverter.parse_tg_submission_data(submission_data)
+                                services = tg_data.get('services', [])
+                                hashes = tg_data.get('hashes', [])
+                                # 从 job_name 中提取服务名（格式：uat/pre-admin-export）
+                                service_name = job_name.split('/')[-1] if '/' in job_name else job_name
+                                # 找到对应的 hash
+                                if service_name in services:
+                                    idx = services.index(service_name)
+                                    if idx < len(hashes):
+                                        git_hash = hashes[idx]
+                        
+                        # 发送通知到 TG 群
+                        await JenkinsNotifier.notify_build_status(
+                            context=context,
+                            workflow_data=workflow_data,
+                            build_data={
+                                'job_name': job_name,
+                                'build_status': build_status,
+                                'build_number': build_number,
+                                'git_hash': git_hash
+                            }
+                        )
                             # 标记为已通知
                             await asyncio.to_thread(
                                 WorkflowManager.mark_jenkins_build_notified,
@@ -248,9 +278,13 @@ class JenkinsMonitor:
     ) -> Dict:
         """获取或创建构建记录（同步方法，在线程池中调用）"""
         try:
-            # 先尝试获取现有记录
-            existing_build = WorkflowManager.get_jenkins_build_by_workflow(workflow_id)
-            if existing_build and existing_build.get('build_number') == build_number:
+            # 先尝试根据 workflow_id、job_name 和 build_number 获取现有记录
+            existing_build = WorkflowManager.get_jenkins_build_by_job_and_number(
+                workflow_id=workflow_id,
+                job_name=job_name,
+                build_number=build_number
+            )
+            if existing_build:
                 return existing_build
             
             # 创建新记录
