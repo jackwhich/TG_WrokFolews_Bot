@@ -462,13 +462,17 @@ class FormHandler:
 
         # 每行按钮数量：从项目配置读取，默认2，范围1-4
         buttons_per_row = 2
+        max_concurrent_builds = 5  # 默认最大并发构建数
         try:
             options = Settings.load_options()
             project_cfg = options.get("projects", {}).get(project, {})
             buttons_per_row = int(project_cfg.get("service_buttons_per_row", 2))
+            max_concurrent_builds = int(project_cfg.get("max_concurrent_builds", 5))
         except Exception:
             buttons_per_row = 2
+            max_concurrent_builds = 5
         buttons_per_row = max(1, min(4, buttons_per_row))
+        max_concurrent_builds = max(1, max_concurrent_builds)  # 至少为1
         
         # 构建按钮键盘（每行最多2个按钮，完整显示服务名）
         keyboard = []
@@ -503,13 +507,17 @@ class FormHandler:
             environment = form_data.get('environment')
             branch_text = await FormHandler._get_default_branch(project, environment)
         
+        # 显示已选择数量和最大限制
+        selected_count = len(selected_services)
+        max_count_text = f"（{selected_count}/{max_concurrent_builds}）" if selected_services else ""
+        
         message = "📋 申请测试环境服务发版\n\n" \
                  f"✅ 申请时间: {form_data['apply_time']}\n" \
                  f"✅ 申请项目: {form_data['project']}\n" \
                  f"✅ 申请环境: {form_data['environment']}\n" \
                  f"✅ 申请发版分支: {branch_text}\n" \
-                 f"⏳ 申请部署服务: {selected_text}\n\n" \
-                 f"💡 可多选，再次点击可取消选择"
+                 f"⏳ 申请部署服务: {selected_text}{max_count_text}\n\n" \
+                 f"💡 可多选，再次点击可取消选择（最多可选择{max_concurrent_builds}个服务）"
         
         # 使用 reply_or_edit 以支持 callback_query 和 message 两种情况
         await reply_or_edit(update, message, reply_markup=reply_markup)
@@ -558,11 +566,27 @@ class FormHandler:
         service = query.data.split(":", 1)[1]
         services = context.user_data['form_data'].get('services', [])
         
+        # 获取最大并发构建数配置
+        form_data = context.user_data.get('form_data', {})
+        project = form_data.get('project')
+        max_concurrent_builds = 5  # 默认值
+        try:
+            options = Settings.load_options()
+            project_cfg = options.get("projects", {}).get(project, {}) if project else {}
+            max_concurrent_builds = int(project_cfg.get("max_concurrent_builds", 5))
+        except Exception:
+            max_concurrent_builds = 5
+        max_concurrent_builds = max(1, max_concurrent_builds)  # 至少为1
+        
         if service in services:
             # 取消选择
             services.remove(service)
             logger.info(f"用户 {query.from_user.id} 取消选择服务: {service}")
         else:
+            # 检查是否已达到最大选择数量
+            if len(services) >= max_concurrent_builds:
+                await query.answer(f"最多只能选择{max_concurrent_builds}个服务，请先取消选择其他服务", show_alert=True)
+                return SELECTING_SERVICE
             # 添加选择
             services.append(service)
             logger.info(f"用户 {query.from_user.id} 选择服务: {service}")
