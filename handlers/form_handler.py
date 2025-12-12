@@ -38,6 +38,29 @@ class FormHandler:
             return False
         options = Settings.load_options()
         return bool(options.get("projects", {}).get(project, {}).get("address_only"))
+
+    @staticmethod
+    def _normalize_services(services_raw: list) -> list[tuple[str, str]]:
+        """
+        标准化服务列表，支持两种格式：
+        1) 纯字符串列表: ["svc1", "svc2"]
+        2) 字典列表（自定义展示名）: [{"name": "svc1", "label": "短名"}]
+        返回列表: [(service_name, display_label), ...]
+        """
+        normalized = []
+        if not isinstance(services_raw, list):
+            return normalized
+        for item in services_raw:
+            if isinstance(item, dict):
+                name = str(item.get("name") or item.get("service") or "").strip()
+                label = str(item.get("label") or name).strip()
+                if name:
+                    normalized.append((name, label))
+            else:
+                name = str(item).strip()
+                if name:
+                    normalized.append((name, name))
+        return normalized
     
     @staticmethod
     async def _get_default_branch(project: str = None, environment: str = None) -> str:
@@ -128,13 +151,15 @@ class FormHandler:
                     break
         if env_key:
             val = services_cfg.get(env_key, [])
-            return val if isinstance(val, list) else []
+            normalized = FormHandler._normalize_services(val if isinstance(val, list) else [])
+            return [name for name, _ in normalized]
         # fallback: 使用 uat key
         uat_val = services_cfg.get("uat") or services_cfg.get("UAT")
         if isinstance(uat_val, list):
+            normalized = FormHandler._normalize_services(uat_val)
             idx = 0 if environment.lower() == "trc" else 1 if environment.lower() == "eth" else 0
-            if idx < len(uat_val):
-                return [uat_val[idx]]
+            if idx < len(normalized):
+                return [normalized[idx][0]]
         return []
     
     @staticmethod
@@ -414,8 +439,9 @@ class FormHandler:
             return ConversationHandler.END
         
         # 根据项目和环境获取服务列表（在线程池中执行，避免阻塞）
-        services = await asyncio.to_thread(lambda: Settings.get_services(project, environment))
-        if not services:
+        services_raw = await asyncio.to_thread(lambda: Settings.get_services(project, environment))
+        services_norm = FormHandler._normalize_services(services_raw)
+        if not services_norm:
             error_msg = f"❌ 项目 {project} 在 {environment} 环境下未配置服务列表，请联系管理员"
             await reply_or_edit(update, error_msg)
             logger.error(f"项目 {project} 在 {environment} 环境下服务列表未配置")
@@ -427,29 +453,40 @@ class FormHandler:
             selected_services = []
             context.user_data['form_data']['services'] = []
         
+        # 服务名称列表
+        all_service_names = [name for name, _ in services_norm]
+
         # 确保已选择的服务都在当前服务列表中（过滤掉无效的服务）
-        selected_services = [s for s in selected_services if s in services]
+        selected_services = [s for s in selected_services if s in all_service_names]
         context.user_data['form_data']['services'] = selected_services
+
+        # 每行按钮数量：从项目配置读取，默认2，范围1-4
+        buttons_per_row = 2
+        try:
+            options = Settings.load_options()
+            project_cfg = options.get("projects", {}).get(project, {})
+            buttons_per_row = int(project_cfg.get("service_buttons_per_row", 2))
+        except Exception:
+            buttons_per_row = 2
+        buttons_per_row = max(1, min(4, buttons_per_row))
         
-        # 构建按钮键盘（每行显示1个按钮，确保完整显示服务名称）
+        # 构建按钮键盘（每行最多2个按钮，完整显示服务名）
         keyboard = []
-        for service in services:
-            # 如果已选择，显示 ✓ 标记
+        row: list[InlineKeyboardButton] = []
+        for service, display in services_norm:
             is_selected = service in selected_services
-            
-            # 按钮文本：✓ 服务名 或 服务名（完整显示）
-            if is_selected:
-                btn_text = f"✓ {service}"
-            else:
-                btn_text = service
-            
-            # 每个服务独占一行，确保按钮足够宽，可以完整显示服务名称
-            keyboard.append([
+            btn_text = f"✓ {display}" if is_selected else display
+            row.append(
                 InlineKeyboardButton(
                     btn_text,
                     callback_data=f"{ACTION_SELECT_SERVICE}:{service}"
                 )
-            ])
+            )
+            if len(row) == buttons_per_row:
+                keyboard.append(row)
+                row = []
+        if row:  # 补齐最后一行
+            keyboard.append(row)
         
         # 添加"完成选择"按钮
         keyboard.append([

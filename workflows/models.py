@@ -165,6 +165,28 @@ class WorkflowManager:
             )
         """)
 
+        # Jenkins 构建表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS jenkins_builds (
+                build_id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                job_name TEXT NOT NULL,
+                job_url TEXT,
+                build_number INTEGER,
+                build_status TEXT NOT NULL DEFAULT 'BUILDING',
+                build_start_time INTEGER,
+                build_end_time INTEGER,
+                build_duration INTEGER,
+                build_console_output TEXT,
+                build_parameters TEXT,
+                notified INTEGER NOT NULL DEFAULT 0,
+                notification_time INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (workflow_id) REFERENCES workflows(workflow_id) ON DELETE CASCADE
+            )
+        """)
+
         # 新增：消息模板表
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS message_templates (
