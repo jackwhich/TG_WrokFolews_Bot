@@ -242,14 +242,13 @@ class JenkinsMonitor:
                                 'git_hash': git_hash
                             }
                         )
-                            # 标记为已通知
+                        # 标记为已通知
+                        if build_id:
                             await asyncio.to_thread(
                                 WorkflowManager.mark_jenkins_build_notified,
                                 build_id
                             )
-                            logger.info(f"✅ 构建通知已发送到 TG 群 - 工作流ID: {workflow_id}, Job: {job_name}, Build: #{build_number}, 状态: {build_status}")
-                        else:
-                            logger.warning(f"⚠️ 未找到构建记录，无法发送通知 - 工作流ID: {workflow_id}, Build ID: {build_id}")
+                        logger.info(f"✅ 构建通知已发送到 TG 群 - 工作流ID: {workflow_id}, Job: {job_name}, Build: #{build_number}, 状态: {build_status}")
                     else:
                         logger.warning(f"⚠️ 未找到工作流数据，无法发送通知 - 工作流ID: {workflow_id}")
                 else:
