@@ -57,14 +57,25 @@ class NotificationHandler:
                 logger.error(f"工作流 {workflow_id} 缺少项目信息，无法确定发送到哪个群组")
                 raise ValueError("工作流缺少项目信息，无法确定发送到哪个群组")
             
-            # 格式化消息（使用项目配置的审批人用户名，或默认值）
-            # 去掉 @ 符号（如果有），因为消息模板中已经包含了 @
+            # 获取所有审批人用户名（支持多个）
             from workflows.models import WorkflowManager
-            approver_username = Settings.get_primary_approver_username(project, default="") or WorkflowManager.get_app_config("APPROVER_USERNAME", "") or "审批人"
-            approver_username = approver_username.lstrip('@')  # 去掉开头的 @ 符号
+            approver_cfg = Settings.get_approver_config(project)
+            approver_usernames = approver_cfg.get("usernames", [])
+            
+            # 如果没有配置审批人，使用全局默认值
+            if not approver_usernames:
+                global_approver = WorkflowManager.get_app_config("APPROVER_USERNAME", "")
+                if global_approver:
+                    approver_usernames = [global_approver]
+                else:
+                    approver_usernames = ["审批人"]
+            
+            # 格式化审批人显示：将所有用户名用空格连接，每个前面加 @
+            approver_display = " ".join([f"@{u.lstrip('@')}" for u in approver_usernames if u])
+            
             message_text = format_workflow_message(
                 workflow_data,
-                approver_username,
+                approver_display,
                 template_type=workflow_data.get("template_type"),
             )
             logger.debug(f"工作流消息已格式化，长度: {len(message_text)}")

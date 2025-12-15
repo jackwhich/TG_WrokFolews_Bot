@@ -56,7 +56,7 @@ WORKFLOW_MESSAGE_TEMPLATE = """━━━━━━━━━━━━━━━━�
 ⏳ 状态: {status}
 ━━━━━━━━━━━━━━━━━━━━
 
-@{approver_username} 请审批"""
+{approver_username} 请审批"""
 
 WORKFLOW_APPROVED_TEMPLATE = """━━━━━━━━━━━━━━━━━━━━
 ✅ 工作流已通过
@@ -110,7 +110,7 @@ WORKFLOW_MESSAGE_TEMPLATE_ADDRESS = """━━━━━━━━━━━━━�
 ⏳ 状态: {status}
 ━━━━━━━━━━━━━━━━━━━━
 
-@{approver_username} 请审批"""
+{approver_username} 请审批"""
 
 WORKFLOW_APPROVED_TEMPLATE_ADDRESS = """━━━━━━━━━━━━━━━━━━━━
 ✅ 链接节点地址已通过
