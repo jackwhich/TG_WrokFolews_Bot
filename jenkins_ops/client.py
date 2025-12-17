@@ -33,21 +33,25 @@ class JenkinsBuildLimiter:
 
     @classmethod
     @asynccontextmanager
-    async def reserve(cls, project_name: str, max_concurrent: int):
+    async def reserve(cls, project_name: str, max_concurrent: int, service_name: Optional[str] = None):
         """
         以 async context 方式申请一个构建槽位
 
         Args:
             project_name: 项目名，用于区分不同项目的限流
             max_concurrent: 该项目允许的最大并发触发数
+            service_name: 服务名称（可选，用于日志显示）
         """
         sem = await cls._get_semaphore(project_name, max_concurrent)
-        logger.debug(f"Jenkins 构建并发控制等待中: {project_name} (上限 {max_concurrent})")
+        service_info = f", 服务: {service_name}" if service_name else ""
+        logger.info(f"⏳ Jenkins 构建并发控制等待中: 项目={project_name}{service_info} (上限 {max_concurrent})")
         await sem.acquire()
+        logger.info(f"✅ Jenkins 构建并发控制已获取槽位: 项目={project_name}{service_info} (上限 {max_concurrent})")
         try:
             yield
         finally:
             sem.release()
+            logger.debug(f"Jenkins 构建并发控制已释放槽位: 项目={project_name}{service_info}")
 
 
 class JenkinsClient:

@@ -37,10 +37,12 @@ class WorkflowManager:
             cls.DATA_DIR.mkdir(exist_ok=True)
             
             # 创建连接，启用外键约束
+            # 注意：Python 3.12+ 默认使用自动提交模式，需要显式设置事务模式以支持手动事务管理
             cls._connection = sqlite3.connect(
                 str(cls.DB_FILE),
                 check_same_thread=False,  # 允许多线程访问
-                timeout=30.0  # 30秒超时
+                timeout=30.0,  # 30秒超时
+                isolation_level='DEFERRED'  # 使用显式事务模式，支持手动 commit()/rollback()
             )
             cls._connection.row_factory = sqlite3.Row  # 返回字典式行对象
             

@@ -752,7 +752,7 @@ class ApprovalHandler:
                 # build_parameters['APPROVER'] = approver_username
                 
                 # 触发构建（受并发上限控制）
-                async with JenkinsBuildLimiter.reserve(project_name, max_concurrent_builds):
+                async with JenkinsBuildLimiter.reserve(project_name, max_concurrent_builds, service_name=service_name):
                     build_result = await asyncio.to_thread(
                         jenkins_client.trigger_build,
                         job_name=job_name,
