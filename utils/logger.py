@@ -1,11 +1,15 @@
 """日志工具"""
 import logging
+import os
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 
-# 日志配置（直接在代码中配置，不存储在数据库中）
-LOG_LEVEL: str = "INFO"
-LOG_FILE: str = "./logs/bot.log"
+# 日志配置（支持环境变量）
+LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+LOG_FILE: str = os.getenv("LOG_FILE", "./logs/bot.log")
+LOG_MAX_BYTES: int = int(os.getenv("LOG_MAX_BYTES", "10485760"))  # 默认10MB
+LOG_BACKUP_COUNT: int = int(os.getenv("LOG_BACKUP_COUNT", "5"))  # 默认保留5个备份文件
 
 
 def setup_logger(name: str = "tg_workflows_bot") -> logging.Logger:
@@ -21,8 +25,13 @@ def setup_logger(name: str = "tg_workflows_bot") -> logging.Logger:
     log_file_path = Path(LOG_FILE)
     log_file_path.parent.mkdir(parents=True, exist_ok=True)
     
-    # 文件处理器
-    file_handler = logging.FileHandler(log_file_path, encoding='utf-8')
+    # 文件处理器（使用轮转，防止日志文件无限增长）
+    file_handler = RotatingFileHandler(
+        log_file_path,
+        maxBytes=LOG_MAX_BYTES,
+        backupCount=LOG_BACKUP_COUNT,
+        encoding='utf-8'
+    )
     file_handler.setLevel(logging.DEBUG)
     file_formatter = logging.Formatter(
         '%(asctime)s.%(msecs)03d - %(name)s - %(levelname)s - %(message)s',

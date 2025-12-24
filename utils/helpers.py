@@ -37,16 +37,20 @@ async def reply_or_edit(update: Update, text: str, **kwargs):
     """
     统一处理回复消息或编辑消息
     
-    如果 update 有 callback_query，则编辑消息
-    如果 update 有 message，则回复消息
+    优先使用 effective_message，兼容 CallbackQuery 和 Message 两种情况
     
     Args:
         update: Telegram Update 对象
         text: 消息文本
         **kwargs: 其他参数（如 reply_markup）
     """
+    # 统一使用 effective_message
+    message = update.effective_message
+    
     if update.callback_query:
+        # 如果有 callback_query，优先编辑消息
         await update.callback_query.edit_message_text(text, **kwargs)
-    elif update.message:
-        await update.message.reply_text(text, **kwargs)
+    elif message:
+        # 否则回复消息
+        await message.reply_text(text, **kwargs)
 

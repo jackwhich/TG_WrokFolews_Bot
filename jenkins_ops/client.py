@@ -184,13 +184,25 @@ class JenkinsClient:
         start = time.time()
         while time.time() - start < timeout:
             try:
-                queue_item = self.server.get_queue_item(queue_id)
-                if "executable" in queue_item and queue_item["executable"]:
-                    build_number = queue_item["executable"]["number"]
-                    logger.info(f"🚀 构建正式开始: {job_name} #{build_number}")
-                    return build_number
-            except Exception:
-                pass
+                # 优先使用 queue_id 查询
+                if queue_id:
+                    queue_item = self.server.get_queue_item(queue_id)
+                    if "executable" in queue_item and queue_item["executable"]:
+                        build_number = queue_item["executable"]["number"]
+                        logger.info(f"🚀 构建正式开始: {job_name} #{build_number}")
+                        return build_number
+                # 如果没有 queue_id 或 queue_id 查询失败，使用 next_build_number 轮询
+                elif next_build_number:
+                    try:
+                        build_info = self.server.get_build_info(job_name, next_build_number)
+                        if build_info:
+                            logger.info(f"🚀 构建已开始: {job_name} #{next_build_number}")
+                            return next_build_number
+                    except Exception:
+                        # 构建尚未开始，继续等待
+                        pass
+            except Exception as e:
+                logger.debug(f"轮询构建状态时出错: {e}")
             time.sleep(2)
-        logger.warning(f"⏳ 等待构建开始超时: {job_name}, queue_id={queue_id}")
+        logger.warning(f"⏳ 等待构建开始超时: {job_name}, queue_id={queue_id}, next_build_number={next_build_number}")
         return None

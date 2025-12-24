@@ -3,6 +3,7 @@ import json
 import sqlite3
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Optional, List
 from datetime import datetime, timedelta
@@ -22,50 +23,69 @@ class WorkflowManager:
     # SQLite 数据库文件路径
     DB_FILE = DATA_DIR / "workflows.db"
     
-    # 数据库连接（线程安全，使用连接池）
-    _connection: Optional[sqlite3.Connection] = None
+    # 数据库连接策略：使用短生命周期连接，避免跨线程问题
     _schema_initialized: bool = False
     
     # 数据保留天数（60天）
     RETENTION_DAYS = 60
     
     @classmethod
-    def _get_connection(cls) -> sqlite3.Connection:
-        """获取数据库连接（单例模式，优化性能）"""
-        if cls._connection is None:
-            # 确保数据目录存在
-            cls.DATA_DIR.mkdir(exist_ok=True)
-            
-            # 创建连接，启用外键约束
-            # 注意：Python 3.12+ 默认使用自动提交模式，需要显式设置事务模式以支持手动事务管理
-            cls._connection = sqlite3.connect(
-                str(cls.DB_FILE),
-                check_same_thread=False,  # 允许多线程访问
-                timeout=30.0,  # 30秒超时
-                isolation_level='DEFERRED'  # 使用显式事务模式，支持手动 commit()/rollback()
-            )
-            cls._connection.row_factory = sqlite3.Row  # 返回字典式行对象
-            
-            # 性能优化：启用WAL模式（Write-Ahead Logging）提升并发性能
-            cls._connection.execute("PRAGMA journal_mode = WAL")
-            # 设置忙等待超时（毫秒），减少锁冲突
-            cls._connection.execute("PRAGMA busy_timeout = 5000")
-            # 优化同步模式：NORMAL模式在WAL下更安全且性能更好
-            cls._connection.execute("PRAGMA synchronous = NORMAL")
-            # 启用外键约束
-            cls._connection.execute("PRAGMA foreign_keys = ON")
-            # 优化缓存大小（2MB，可根据需要调整）
-            cls._connection.execute("PRAGMA cache_size = -2048")
-            # 优化临时存储
-            cls._connection.execute("PRAGMA temp_store = MEMORY")
-            
-            logger.debug(f"SQLite 数据库连接已建立（WAL模式）: {cls.DB_FILE}")
+    def _create_connection(cls) -> sqlite3.Connection:
+        """
+        创建新的数据库连接（短生命周期，每次操作使用独立连接）
         
-        # 确保表结构
+        这样可以避免跨线程使用同一连接导致的线程安全问题。
+        每次调用都会创建新连接，使用后应立即关闭。
+        """
+        # 确保数据目录存在
+        cls.DATA_DIR.mkdir(exist_ok=True)
+        
+        # 创建连接，启用外键约束
+        conn = sqlite3.connect(
+            str(cls.DB_FILE),
+            timeout=30.0,  # 30秒超时
+            isolation_level='DEFERRED'  # 使用显式事务模式，支持手动 commit()/rollback()
+        )
+        conn.row_factory = sqlite3.Row  # 返回字典式行对象
+        
+        # 性能优化：启用WAL模式（Write-Ahead Logging）提升并发性能
+        conn.execute("PRAGMA journal_mode = WAL")
+        # 设置忙等待超时（毫秒），减少锁冲突
+        conn.execute("PRAGMA busy_timeout = 5000")
+        # 优化同步模式：NORMAL模式在WAL下更安全且性能更好
+        conn.execute("PRAGMA synchronous = NORMAL")
+        # 启用外键约束
+        conn.execute("PRAGMA foreign_keys = ON")
+        # 优化缓存大小（2MB，可根据需要调整）
+        conn.execute("PRAGMA cache_size = -2048")
+        # 优化临时存储
+        conn.execute("PRAGMA temp_store = MEMORY")
+        
+        return conn
+    
+    @classmethod
+    @contextmanager
+    def _get_connection(cls):
+        """
+        获取数据库连接的上下文管理器（推荐使用方式）
+        
+        使用示例:
+            with cls._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT ...")
+                conn.commit()
+        """
+        conn = cls._create_connection()
+        
+        # 确保表结构（仅在首次初始化时执行）
         if not cls._schema_initialized:
-            cls._ensure_schema()
+            cls._ensure_schema(conn)
+            cls._schema_initialized = True
         
-        return cls._connection
+        try:
+            yield conn
+        finally:
+            conn.close()
 
     # ------------------------------------------------------------------ schema helpers
     @classmethod
@@ -77,11 +97,8 @@ class WorkflowManager:
             cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     @classmethod
-    def _ensure_schema(cls):
+    def _ensure_schema(cls, conn: sqlite3.Connection):
         """初始化/迁移表结构（幂等）"""
-        conn = cls._connection
-        if conn is None:
-            return
         cursor = conn.cursor()
 
         # 原有表结构
@@ -205,6 +222,15 @@ class WorkflowManager:
         cls._ensure_column(cursor, "workflows", "template_type", "TEXT")
 
         # 索引（保留原有，存在则跳过）
+        # 关键字段索引
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_workflows_workflow_id 
+            ON workflows(workflow_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_workflows_created_at 
+            ON workflows(created_at)
+        """)
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_workflows_timestamp 
             ON workflows(timestamp)
@@ -236,6 +262,11 @@ class WorkflowManager:
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_workflow_messages_message_id 
             ON workflow_messages(message_id)
+        """)
+        # 添加文档建议的索引：message_id 用于根据消息ID查找工作流
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_workflows_message_id_lookup 
+            ON workflow_messages(message_id, workflow_id)
         """)
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_workflows_status_timestamp 
@@ -323,16 +354,33 @@ class WorkflowManager:
             CREATE INDEX IF NOT EXISTS idx_jenkins_builds_end_time 
             ON jenkins_builds(build_end_time)
         """)
+        # 添加文档建议的复合索引：用于根据 workflow_id, job_name, build_number 查询
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_jenkins_by_workflow_job_number 
+            ON jenkins_builds(workflow_id, job_name, build_number)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_jenkins_build_status 
+            ON jenkins_builds(build_status)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_jenkins_build_build_id 
+            ON jenkins_builds(build_id)
+        """)
 
         conn.commit()
-        cls._schema_initialized = True
     
     @classmethod
     def _init_database(cls):
         """初始化数据库表结构（委托 _ensure_schema，避免重复定义）"""
-        cls._get_connection()
-        cls._ensure_schema()
-        logger.info("✅ 数据库表结构和索引初始化完成（幂等）")
+        conn = cls._create_connection()
+        try:
+            cls._ensure_schema(conn)
+            conn.commit()
+            cls._schema_initialized = True
+            logger.info("✅ 数据库表结构和索引初始化完成（幂等）")
+        finally:
+            conn.close()
     
     @classmethod
     def _init_project_options(cls, options_file: Path = None, force_update: bool = False):
@@ -343,89 +391,89 @@ class WorkflowManager:
             options_file: 配置文件路径
             force_update: 是否强制更新（即使数据库中已有配置也更新）
         """
-        conn = cls._get_connection()
-        cursor = conn.cursor()
-        
-        # 检查数据库中是否已有配置
-        cursor.execute("SELECT COUNT(*) FROM project_options WHERE config_key = 'projects'")
-        count = cursor.fetchone()[0]
-        
-        if count > 0 and not force_update:
-            logger.info("项目配置已存在于数据库中，跳过初始化")
-            return
-        
-        # 从 JSON 文件加载
-        if options_file is None:
-            options_file = Path("config/options.json")
-        
-        if not options_file.exists():
-            logger.error(f"项目配置文件不存在: {options_file}，请创建该文件")
-            raise FileNotFoundError(f"项目配置文件不存在: {options_file}")
-        
-        try:
-            with open(options_file, 'r', encoding='utf-8') as f:
-                options_data = json.load(f)
-            logger.info(f"从文件加载项目配置: {options_file}")
-        except Exception as e:
-            logger.error(f"读取项目配置文件失败: {str(e)}", exc_info=True)
-            raise
-        
-        # 将配置存储到数据库（使用事务优化批量操作）
-        timestamp = int(time.time())
-        try:
-            cursor.execute("""
-                INSERT OR REPLACE INTO project_options (config_key, config_value, updated_at)
-                VALUES (?, ?, ?)
-            """, ("projects", json.dumps(options_data, ensure_ascii=False), timestamp))
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
             
-            conn.commit()
-        except Exception as e:
-            conn.rollback()
-            raise
-        if force_update:
-            logger.info("✅ 项目配置已更新到数据库")
-        else:
-            logger.info("✅ 项目配置已初始化到数据库")
+            # 检查数据库中是否已有配置
+            cursor.execute("SELECT COUNT(*) FROM project_options WHERE config_key = 'projects'")
+            count = cursor.fetchone()[0]
+            
+            if count > 0 and not force_update:
+                logger.info("项目配置已存在于数据库中，跳过初始化")
+                return
+            
+            # 从 JSON 文件加载
+            if options_file is None:
+                options_file = Path("config/options.json")
+            
+            if not options_file.exists():
+                logger.error(f"项目配置文件不存在: {options_file}，请创建该文件")
+                raise FileNotFoundError(f"项目配置文件不存在: {options_file}")
+            
+            try:
+                with open(options_file, 'r', encoding='utf-8') as f:
+                    options_data = json.load(f)
+                logger.info(f"从文件加载项目配置: {options_file}")
+            except Exception as e:
+                logger.error(f"读取项目配置文件失败: {str(e)}", exc_info=True)
+                raise
+            
+            # 将配置存储到数据库（使用事务优化批量操作）
+            timestamp = int(time.time())
+            try:
+                cursor.execute("""
+                    INSERT OR REPLACE INTO project_options (config_key, config_value, updated_at)
+                    VALUES (?, ?, ?)
+                """, ("projects", json.dumps(options_data, ensure_ascii=False), timestamp))
+                
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                raise
+            if force_update:
+                logger.info("✅ 项目配置已更新到数据库")
+            else:
+                logger.info("✅ 项目配置已初始化到数据库")
     
     @classmethod
     def get_project_options(cls) -> Dict:
         """从数据库获取项目配置"""
-        conn = cls._get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT config_value FROM project_options 
-            WHERE config_key = 'projects'
-        """)
-        
-        row = cursor.fetchone()
-        if row:
-            try:
-                return json.loads(row[0])
-            except (json.JSONDecodeError, TypeError) as e:
-                logger.error(f"解析项目配置JSON失败: {str(e)}", exc_info=True)
-                return {"projects": {}}
-        
-        return {"projects": {}}
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT config_value FROM project_options 
+                WHERE config_key = 'projects'
+            """)
+            
+            row = cursor.fetchone()
+            if row:
+                try:
+                    return json.loads(row[0])
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.error(f"解析项目配置JSON失败: {str(e)}", exc_info=True)
+                    return {"projects": {}}
+            
+            return {"projects": {}}
     
     @classmethod
     def update_project_options(cls, options_data: Dict) -> bool:
         """更新项目配置"""
-        conn = cls._get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            timestamp = int(time.time())
-            cursor.execute("""
-                INSERT OR REPLACE INTO project_options (config_key, config_value, updated_at)
-                VALUES (?, ?, ?)
-            """, ("projects", json.dumps(options_data, ensure_ascii=False), timestamp))
-            conn.commit()
-            logger.info("✅ 项目配置已更新")
-            return True
-        except Exception as e:
-            logger.error(f"更新项目配置失败: {str(e)}", exc_info=True)
-            return False
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            try:
+                timestamp = int(time.time())
+                cursor.execute("""
+                    INSERT OR REPLACE INTO project_options (config_key, config_value, updated_at)
+                    VALUES (?, ?, ?)
+                """, ("projects", json.dumps(options_data, ensure_ascii=False), timestamp))
+                conn.commit()
+                logger.info("✅ 项目配置已更新")
+                return True
+            except Exception as e:
+                logger.error(f"更新项目配置失败: {str(e)}", exc_info=True)
+                return False
 
     # ======================== 模板读写 ========================
     @classmethod
@@ -439,47 +487,47 @@ class WorkflowManager:
             WORKFLOW_APPROVED_TEMPLATE_ADDRESS,
             WORKFLOW_REJECTED_TEMPLATE_ADDRESS,
         )
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
 
-        defaults = {
-            ("default", None): WORKFLOW_MESSAGE_TEMPLATE,
-            ("approved_default", None): WORKFLOW_APPROVED_TEMPLATE,
-            ("rejected_default", None): WORKFLOW_REJECTED_TEMPLATE,
-            ("address_only", None): WORKFLOW_MESSAGE_TEMPLATE_ADDRESS,
-            ("approved_address_only", None): WORKFLOW_APPROVED_TEMPLATE_ADDRESS,
-            ("rejected_address_only", None): WORKFLOW_REJECTED_TEMPLATE_ADDRESS,
-        }
+            defaults = {
+                ("default", None): WORKFLOW_MESSAGE_TEMPLATE,
+                ("approved_default", None): WORKFLOW_APPROVED_TEMPLATE,
+                ("rejected_default", None): WORKFLOW_REJECTED_TEMPLATE,
+                ("address_only", None): WORKFLOW_MESSAGE_TEMPLATE_ADDRESS,
+                ("approved_address_only", None): WORKFLOW_APPROVED_TEMPLATE_ADDRESS,
+                ("rejected_address_only", None): WORKFLOW_REJECTED_TEMPLATE_ADDRESS,
+            }
 
-        timestamp = int(time.time())
-        changed = False
-        try:
-            for (tpl_type, project), content in defaults.items():
-                cursor.execute(
-                    "SELECT 1 FROM message_templates WHERE template_type = ? AND project IS ?",
-                    (tpl_type, project),
-                )
-                if cursor.fetchone() is None:
+            timestamp = int(time.time())
+            changed = False
+            try:
+                for (tpl_type, project), content in defaults.items():
                     cursor.execute(
-                        """
-                        INSERT INTO message_templates (template_type, project, content, updated_at)
-                        VALUES (?, ?, ?, ?)
-                        """,
-                        (tpl_type, project, content, timestamp),
+                        "SELECT 1 FROM message_templates WHERE template_type = ? AND project IS ?",
+                        (tpl_type, project),
                     )
-                    changed = True
-            if changed:
-                conn.commit()
-        except Exception as e:
-            conn.rollback()
-            logger.error(f"初始化默认模板失败: {str(e)}", exc_info=True)
-            raise
+                    if cursor.fetchone() is None:
+                        cursor.execute(
+                            """
+                            INSERT INTO message_templates (template_type, project, content, updated_at)
+                            VALUES (?, ?, ?, ?)
+                            """,
+                            (tpl_type, project, content, timestamp),
+                        )
+                        changed = True
+                if changed:
+                    conn.commit()
+            except Exception as e:
+                conn.rollback()
+                logger.error(f"初始化默认模板失败: {str(e)}", exc_info=True)
+                raise
 
     @classmethod
     def set_message_template(cls, template_type: str, content: str, project: Optional[str] = None) -> bool:
         """写入/更新消息模板"""
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         try:
             timestamp = int(time.time())
             cursor.execute(
@@ -506,8 +554,8 @@ class WorkflowManager:
         default: Optional[str] = None
     ) -> str:
         """获取消息模板，优先项目级，其次通用，最后回退默认值"""
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
 
         # 确保有缺省模板
         cls._ensure_default_templates()
@@ -569,46 +617,46 @@ class WorkflowManager:
     def _cleanup_old_data(cls):
         """清理 60 天前的旧数据（分批删除优化性能，避免长时间锁表）"""
         try:
-            conn = cls._get_connection()
-            cursor = conn.cursor()
-            
-            # 计算 60 天前的时间戳
-            cutoff_time = datetime.now() - timedelta(days=cls.RETENTION_DAYS)
-            cutoff_timestamp = int(cutoff_time.timestamp())
-            
-            # 分批删除，每次删除1000条，避免长时间锁表
-            batch_size = 1000
-            total_deleted = 0
-            
-            while True:
-                # 使用 LIMIT 分批删除
-                cursor.execute("""
-                    DELETE FROM workflows 
-                    WHERE workflow_id IN (
-                        SELECT workflow_id FROM workflows 
-                        WHERE timestamp < ? 
-                        LIMIT ?
-                    )
-                """, (cutoff_timestamp, batch_size))
+            with cls._get_connection() as conn:
+                cursor = conn.cursor()
                 
-                deleted_in_batch = cursor.rowcount
-                total_deleted += deleted_in_batch
-                conn.commit()
+                # 计算 60 天前的时间戳
+                cutoff_time = datetime.now() - timedelta(days=cls.RETENTION_DAYS)
+                cutoff_timestamp = int(cutoff_time.timestamp())
                 
-                if deleted_in_batch == 0:
-                    break
+                # 分批删除，每次删除1000条，避免长时间锁表
+                batch_size = 1000
+                total_deleted = 0
                 
-                logger.debug(f"清理进度: 已删除 {total_deleted} 条旧数据")
+                while True:
+                    # 使用 LIMIT 分批删除
+                    cursor.execute("""
+                        DELETE FROM workflows 
+                        WHERE workflow_id IN (
+                            SELECT workflow_id FROM workflows 
+                            WHERE timestamp < ? 
+                            LIMIT ?
+                        )
+                    """, (cutoff_timestamp, batch_size))
+                    
+                    deleted_in_batch = cursor.rowcount
+                    total_deleted += deleted_in_batch
+                    conn.commit()
+                    
+                    if deleted_in_batch == 0:
+                        break
+                    
+                    logger.debug(f"清理进度: 已删除 {total_deleted} 条旧数据")
+                    
+                    # 短暂休眠，让其他操作有机会执行
+                    time.sleep(0.1)
                 
-                # 短暂休眠，让其他操作有机会执行
-                time.sleep(0.1)
-            
-            if total_deleted > 0:
-                logger.info(f"已清理 {total_deleted} 条 {cls.RETENTION_DAYS} 天前的旧数据")
-                # 可选：执行 VACUUM 回收空间（在低峰期执行）
-                # cursor.execute("PRAGMA incremental_vacuum")
-            
-            return total_deleted
+                if total_deleted > 0:
+                    logger.info(f"已清理 {total_deleted} 条 {cls.RETENTION_DAYS} 天前的旧数据")
+                    # 可选：执行 VACUUM 回收空间（在低峰期执行）
+                    # cursor.execute("PRAGMA incremental_vacuum")
+                
+                return total_deleted
         except Exception as e:
             logger.error(f"清理旧数据时发生错误: {str(e)}", exc_info=True)
             return 0
@@ -616,8 +664,8 @@ class WorkflowManager:
     @classmethod
     def _init_app_config(cls):
         """初始化应用配置表（仅创建表结构，配置值从 settings.py 的默认值初始化）"""
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         
         # 检查数据库中是否已有配置
         cursor.execute("SELECT COUNT(*) FROM app_config")
@@ -663,8 +711,8 @@ class WorkflowManager:
     @classmethod
     def get_app_config(cls, key: str, default: str = None) -> Optional[str]:
         """从数据库获取应用配置"""
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         
         cursor.execute("""
             SELECT config_value FROM app_config 
@@ -680,8 +728,8 @@ class WorkflowManager:
     @classmethod
     def get_all_app_config(cls) -> Dict[str, str]:
         """从数据库获取所有应用配置"""
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         
         cursor.execute("SELECT config_key, config_value FROM app_config")
         rows = cursor.fetchall()
@@ -695,8 +743,8 @@ class WorkflowManager:
     @classmethod
     def update_app_config(cls, key: str, value: str) -> bool:
         """更新应用配置"""
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         
         try:
             timestamp = int(time.time())
@@ -731,8 +779,8 @@ class WorkflowManager:
         Returns:
             创建的工作流数据字典
         """
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         
         # 生成工作流ID
         workflow_id = generate_workflow_id()
@@ -773,8 +821,8 @@ class WorkflowManager:
     @classmethod
     def get_workflow(cls, workflow_id: str) -> Optional[dict]:
         """获取工作流"""
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         
         cursor.execute("""
             SELECT * FROM workflows 
@@ -790,8 +838,8 @@ class WorkflowManager:
     @classmethod
     def get_workflow_by_message_id(cls, message_id: int) -> Optional[dict]:
         """根据消息ID获取工作流"""
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         
         cursor.execute("""
             SELECT w.* FROM workflows w
@@ -817,8 +865,8 @@ class WorkflowManager:
         Returns:
             是否成功
         """
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         
         # 构建更新字段
         update_fields = []
@@ -871,8 +919,8 @@ class WorkflowManager:
     @classmethod
     def delete_workflow(cls, workflow_id: str) -> bool:
         """删除工作流（级联删除关联的消息和 SSO 记录）"""
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         
         try:
             cursor.execute("DELETE FROM workflows WHERE workflow_id = ?", (workflow_id,))
@@ -904,8 +952,8 @@ class WorkflowManager:
         Returns:
             工作流字典
         """
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         
         # 构建查询条件
         conditions = []
@@ -967,8 +1015,8 @@ class WorkflowManager:
         Returns:
             SSO 提交记录字典
         """
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         
         # 生成提交ID（使用 workflow_id 作为 submission_id）
         submission_id = workflow_id
@@ -1022,8 +1070,8 @@ class WorkflowManager:
         Returns:
             SSO 提交记录字典，如果不存在返回 None
         """
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         
         cursor.execute("""
             SELECT * FROM sso_submissions 
@@ -1067,8 +1115,8 @@ class WorkflowManager:
             response: SSO 提交响应（可选）
             error: 错误信息（可选）
         """
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         
         updated_at = get_current_timestamp()
         update_fields = ["submit_status = ?", "updated_at = ?"]
@@ -1123,8 +1171,8 @@ class WorkflowManager:
         Returns:
             构建状态记录字典
         """
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         
         # 生成构建ID
         build_id = f"BUILD-{int(time.time())}-{str(uuid.uuid4())[:8].upper()}"
@@ -1188,8 +1236,8 @@ class WorkflowManager:
             status: 构建状态 (BUILDING/SUCCESS/FAILURE/ABORTED)
             build_detail: 构建详情（可选）
         """
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         
         updated_at = get_current_timestamp()
         update_fields = ["build_status = ?", "updated_at = ?"]
@@ -1235,8 +1283,8 @@ class WorkflowManager:
         Returns:
             构建状态记录列表
         """
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         
         # 使用索引优化的查询（build_status, notified, build_end_time 复合索引）
         sql = """
@@ -1275,8 +1323,8 @@ class WorkflowManager:
         Args:
             build_id: 构建ID
         """
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         
         notification_time = int(time.time())
         updated_at = get_current_timestamp()
@@ -1320,8 +1368,8 @@ class WorkflowManager:
         Returns:
             Jenkins 构建记录字典
         """
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         
         # 生成构建ID
         build_id = f"JENKINS-{int(time.time())}-{str(uuid.uuid4())[:8].upper()}"
@@ -1380,8 +1428,8 @@ class WorkflowManager:
         Returns:
             是否成功
         """
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         
         updated_at = get_current_timestamp()
         update_fields = ["updated_at = ?"]
@@ -1434,8 +1482,8 @@ class WorkflowManager:
         Returns:
             Jenkins 构建记录字典，如果不存在返回 None
         """
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         
         cursor.execute("""
             SELECT * FROM jenkins_builds 
@@ -1468,8 +1516,8 @@ class WorkflowManager:
         Returns:
             Jenkins 构建记录字典，如果不存在返回 None
         """
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         
         cursor.execute("""
             SELECT * FROM jenkins_builds 
@@ -1502,8 +1550,8 @@ class WorkflowManager:
         Returns:
             Jenkins 构建记录字典，如果不存在返回 None
         """
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         
         cursor.execute("""
             SELECT * FROM jenkins_builds 
@@ -1535,8 +1583,8 @@ class WorkflowManager:
         Returns:
             Jenkins 构建记录列表
         """
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         
         # 使用索引优化的查询（build_status, notified, build_end_time 复合索引）
         sql = """
@@ -1578,8 +1626,8 @@ class WorkflowManager:
         Returns:
             是否成功
         """
-        conn = cls._get_connection()
-        cursor = conn.cursor()
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
         
         notification_time = int(time.time())
         updated_at = get_current_timestamp()

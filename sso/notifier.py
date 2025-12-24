@@ -47,15 +47,21 @@ class SSONotifier:
                         service_names = [item.get('name', '') for item in account_data]
                         services_text = '\n'.join([f"  • {name}" for name in service_names if name])
             
-            # 构建通知消息
+            # 构建通知消息（使用HTML格式）
+            import html
+            safe_workflow_id = html.escape(str(workflow_id))
+            safe_process_instance_id = html.escape(str(process_instance_id))
+            safe_submit_time = html.escape(str(submit_time))
+            safe_services_text = html.escape(str(services_text))
+            
             message = (
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"✅ SSO 工单提交成功\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"🆔 工作流ID: `{workflow_id}`\n"
-                f"📋 SSO 工单ID: `{process_instance_id}`\n"
-                f"📅 提交时间: {submit_time}\n\n"
-                f"🚀 发布服务:\n{services_text}\n\n"
+                f"🆔 工作流ID: <code>{safe_workflow_id}</code>\n"
+                f"📋 SSO 工单ID: <code>{safe_process_instance_id}</code>\n"
+                f"📅 提交时间: {safe_submit_time}\n\n"
+                f"🚀 发布服务:\n{safe_services_text}\n\n"
                 f"⏳ 构建正在进行中，完成后将自动通知..."
             )
             
@@ -82,14 +88,19 @@ class SSONotifier:
         try:
             workflow_id = workflow_data.get('workflow_id', 'N/A')
             
-            # 构建通知消息
+            # 构建通知消息（使用HTML格式）
+            import html
+            safe_workflow_id = html.escape(str(workflow_id))
+            safe_approval_time = html.escape(str(workflow_data.get('approval_time', 'N/A')))
+            safe_error_message = html.escape(str(error_message))
+            
             message = (
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"❌ SSO 工单提交失败\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"🆔 工作流ID: `{workflow_id}`\n"
-                f"📅 提交时间: {workflow_data.get('approval_time', 'N/A')}\n\n"
-                f"❌ 错误信息: {error_message}\n\n"
+                f"🆔 工作流ID: <code>{safe_workflow_id}</code>\n"
+                f"📅 提交时间: {safe_approval_time}\n\n"
+                f"❌ 错误信息: {safe_error_message}\n\n"
                 f"请检查配置或联系管理员"
             )
             
@@ -128,38 +139,46 @@ class SSONotifier:
                 seconds = duration_seconds % 60
                 build_duration = f"{minutes}分{seconds}秒"
             
+            # HTML转义
+            import html
+            safe_workflow_id = html.escape(str(workflow_id))
+            safe_job_name = html.escape(str(job_name))
+            safe_build_duration = html.escape(str(build_duration))
+            safe_status = html.escape(str(status))
+            
             if status == 'SUCCESS':
                 message = (
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"✅ 构建成功\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"🆔 工作流ID: `{workflow_id}`\n"
-                    f"📋 服务名称: {job_name}\n"
-                    f"⏱️ 构建时间: {build_duration}\n\n"
+                    f"🆔 工作流ID: <code>{safe_workflow_id}</code>\n"
+                    f"📋 服务名称: {safe_job_name}\n"
+                    f"⏱️ 构建时间: {safe_build_duration}\n\n"
                     f"✅ 构建状态: 成功\n"
                     f"💡 请研发查看服务启动日志"
                 )
             elif status == 'FAILURE':
                 approver_username = workflow_data.get('approver_username', '')
+                safe_approver_username = html.escape(str(approver_username)) if approver_username else ''
                 message = (
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"❌ 构建失败\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"🆔 工作流ID: `{workflow_id}`\n"
-                    f"📋 服务名称: {job_name}\n"
-                    f"⏱️ 构建时间: {build_duration}\n\n"
+                    f"🆔 工作流ID: <code>{safe_workflow_id}</code>\n"
+                    f"📋 服务名称: {safe_job_name}\n"
+                    f"⏱️ 构建时间: {safe_build_duration}\n\n"
                     f"❌ 构建状态: 失败\n"
                     f"🔍 请查看日志排查问题\n\n"
                 )
-                if approver_username:
-                    message += f"@{approver_username} 请查看日志"
+                if safe_approver_username:
+                    message += f"@{safe_approver_username} 请查看日志"
             elif status == 'ABORTED':
                 message = (
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"⚠️ 构建已终止\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"🆔 工作流ID: `{workflow_id}`\n"
-                    f"📋 服务名称: {job_name}\n\n"
+                    f"🆔 工作流ID: <code>{safe_workflow_id}</code>\n"
+                    f"📋 服务名称: {safe_job_name}\n\n"
                     f"⚠️ 构建状态: 已终止"
                 )
             else:
@@ -167,9 +186,9 @@ class SSONotifier:
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"❓ 构建状态未知\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"🆔 工作流ID: `{workflow_id}`\n"
-                    f"📋 服务名称: {job_name}\n"
-                    f"状态: {status}"
+                    f"🆔 工作流ID: <code>{safe_workflow_id}</code>\n"
+                    f"📋 服务名称: {safe_job_name}\n"
+                    f"状态: {safe_status}"
                 )
             
             # 发送到工作流的原始群组
@@ -215,7 +234,7 @@ class SSONotifier:
                                 await context.bot.send_message(
                                     chat_id=group_id,
                                     text=message,
-                                    parse_mode='Markdown'
+                                    parse_mode='HTML'
                                 )
                                 logger.info(f"SSO 通知已发送到群组 {group_id}")
                             except Exception as e:
@@ -228,7 +247,7 @@ class SSONotifier:
                     await context.bot.send_message(
                         chat_id=group_id,
                         text=message,
-                        parse_mode='Markdown'
+                        parse_mode='HTML'
                     )
                     logger.info(f"SSO 通知已发送到群组 {group_id}")
                 except Exception as e:

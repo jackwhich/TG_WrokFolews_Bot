@@ -1,4 +1,5 @@
 """消息格式化工具"""
+import html
 from config.constants import (
     STATUS_PENDING,
     STATUS_APPROVED,
@@ -53,13 +54,19 @@ def format_workflow_message(workflow_data: dict, approver_username: str, templat
     else:
         template = _resolve_template("default", WORKFLOW_MESSAGE_TEMPLATE, project=project)
     
+    # HTML转义用户输入字段，防止XSS和格式破坏
+    safe_username = html.escape(str(workflow_data.get("username", "N/A")))
+    safe_approver_username = html.escape(str(approver_username))
+    safe_created_at = html.escape(str(workflow_data.get("created_at", "N/A")))
+    safe_workflow_id = html.escape(str(workflow_data.get("workflow_id", "N/A")))
+    
     return template.format(
-        workflow_id=workflow_data.get("workflow_id", "N/A"),
-        username=workflow_data.get("username", "N/A"),
-        created_at=workflow_data.get("created_at", "N/A"),
+        workflow_id=safe_workflow_id,
+        username=safe_username,
+        created_at=safe_created_at,
         submission_data=format_submission_data(workflow_data.get("submission_data", "")),
         status=status_text,
-        approver_username=approver_username,
+        approver_username=safe_approver_username,
     )
 
 
@@ -85,11 +92,17 @@ def format_approval_result(workflow_data: dict, approver_username: str, template
             ""
         )
         
+        # HTML转义用户输入字段
+        safe_workflow_id = html.escape(str(workflow_data.get("workflow_id", "N/A")))
+        safe_username = html.escape(str(workflow_data.get("username", "N/A")))
+        safe_approver_username = html.escape(str(approver_username))
+        safe_approval_time = html.escape(str(workflow_data.get("approval_time", "N/A")))
+        
         return template.format(
-            workflow_id=workflow_data.get("workflow_id", "N/A"),
-            username=workflow_data.get("username", "N/A"),
-            approver_username=approver_username,
-            approval_time=workflow_data.get("approval_time", "N/A"),
+            workflow_id=safe_workflow_id,
+            username=safe_username,
+            approver_username=safe_approver_username,
+            approval_time=safe_approval_time,
             submission_data=format_submission_data(workflow_data.get("submission_data", "")),
         )
     elif status == STATUS_REJECTED:
@@ -102,13 +115,20 @@ def format_approval_result(workflow_data: dict, approver_username: str, template
             base_template,
             project=project,
         )
+        # HTML转义用户输入字段
+        safe_workflow_id = html.escape(str(workflow_data.get("workflow_id", "N/A")))
+        safe_username = html.escape(str(workflow_data.get("username", "N/A")))
+        safe_approver_username = html.escape(str(approver_username))
+        safe_approval_time = html.escape(str(workflow_data.get("approval_time", "N/A")))
+        safe_approval_comment = html.escape(str(workflow_data.get("approval_comment", "无")))
+        
         return template.format(
-            workflow_id=workflow_data.get("workflow_id", "N/A"),
-            username=workflow_data.get("username", "N/A"),
-            approver_username=approver_username,
-            approval_time=workflow_data.get("approval_time", "N/A"),
+            workflow_id=safe_workflow_id,
+            username=safe_username,
+            approver_username=safe_approver_username,
+            approval_time=safe_approval_time,
             submission_data=format_submission_data(workflow_data.get("submission_data", "")),
-            approval_comment=workflow_data.get("approval_comment", "无"),
+            approval_comment=safe_approval_comment,
         )
     else:
         return format_workflow_message(workflow_data, approver_username)
@@ -151,11 +171,14 @@ def format_submission_data(data: str) -> str:
         formatted_lines = []
 
         if parsed_data.get('apply_time'):
-            formatted_lines.append(f"🕐 申请时间: {parsed_data['apply_time']}")
+            safe_apply_time = html.escape(str(parsed_data['apply_time']))
+            formatted_lines.append(f"🕐 申请时间: {safe_apply_time}")
         if project:
-            formatted_lines.append(f"📦 申请项目: {project}")
+            safe_project = html.escape(str(project))
+            formatted_lines.append(f"📦 申请项目: {safe_project}")
         if parsed_data.get('environment'):
-            formatted_lines.append(f"🌍 申请环境: {parsed_data['environment']}")
+            safe_environment = html.escape(str(parsed_data['environment']))
+            formatted_lines.append(f"🌍 申请环境: {safe_environment}")
 
         services = parsed_data.get('services', [])
         hashes = parsed_data.get('hashes', [])
@@ -173,32 +196,37 @@ def format_submission_data(data: str) -> str:
             if addr_list:
                 formatted_lines.append("🏷 申请新增地址:")
                 for addr in addr_list:
-                    formatted_lines.append(f"   • {addr}")
+                    safe_addr = html.escape(str(addr))
+                    formatted_lines.append(f"   • {safe_addr}")
             return "\n".join(formatted_lines) if formatted_lines else data
 
         branch = parsed_data.get('branch')
         if branch:
-            formatted_lines.append(f"🌿 申请发版分支: {branch}")
+            safe_branch = html.escape(str(branch))
+            formatted_lines.append(f"🌿 申请发版分支: {safe_branch}")
 
         if hashes:
             if len(hashes) == 1:
+                safe_hash = html.escape(str(hashes[0]))
                 if services and len(services) == 1:
-                    formatted_lines.append(f"🚀 申请部署服务: {services[0]}\n🔑 申请发版hash: <b>{hashes[0]}</b>")
+                    safe_service = html.escape(str(services[0]))
+                    formatted_lines.append(f"🚀 申请部署服务: {safe_service}\n🔑 申请发版hash: <b>{safe_hash}</b>")
                 else:
-                    formatted_lines.append(f"🔑 申请发版hash: <b>{hashes[0]}</b>")
+                    formatted_lines.append(f"🔑 申请发版hash: <b>{safe_hash}</b>")
             else:
                 if len(hashes) == len(services) and services:
                     hash_text = "\n   ".join([
-                        f"• {services[i]}: <b>{hashes[i]}</b>"
+                        f"• {html.escape(str(services[i]))}: <b>{html.escape(str(hashes[i]))}</b>"
                         for i in range(len(services))
                     ])
                     formatted_lines.append(f"🚀 申请部署服务及hash:\n   {hash_text}")
                 else:
-                    hash_text = "\n   ".join([f"• <b>{h}</b>" for h in hashes])
+                    hash_text = "\n   ".join([f"• <b>{html.escape(str(h))}</b>" for h in hashes])
                     formatted_lines.append(f"🔑 申请发版hash:\n   {hash_text}")
 
         if parsed_data.get('content'):
-            formatted_lines.append(f"📝 申请发版服务内容: {parsed_data['content']}")
+            safe_content = html.escape(str(parsed_data['content']))
+            formatted_lines.append(f"📝 申请发版服务内容: {safe_content}")
 
         return "\n".join(formatted_lines) if formatted_lines else data
     except Exception:

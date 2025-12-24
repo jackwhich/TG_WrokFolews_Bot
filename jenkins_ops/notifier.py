@@ -51,42 +51,47 @@ class JenkinsNotifier:
             service_display = f"{job_name}#{build_number}" if build_number else job_name
             git_hash = build_data.get('git_hash')
             
-            # 根据状态构建通知消息
+            # 根据状态构建通知消息（使用HTML格式）
+            import html
+            safe_service_display = html.escape(str(service_display))
+            safe_git_hash = html.escape(str(git_hash)) if git_hash else None
+            
             if status == 'SUCCESS':
-                message = "✅ **构建成功**\n\n"
-                message += f"📦 服务: {service_display}\n"
-                if git_hash:
-                    message += f"🔑 Hash: `{git_hash}`\n"
+                message = "✅ <b>构建成功</b>\n\n"
+                message += f"📦 服务: {safe_service_display}\n"
+                if safe_git_hash:
+                    message += f"🔑 Hash: <code>{safe_git_hash}</code>\n"
                 message += f"✅ 状态: 构建完成"
             elif status == 'FAILURE':
-                message = "❌ **构建失败**\n\n"
-                message += f"📦 服务: {service_display}\n"
-                if git_hash:
-                    message += f"🔑 Hash: `{git_hash}`\n"
+                message = "❌ <b>构建失败</b>\n\n"
+                message += f"📦 服务: {safe_service_display}\n"
+                if safe_git_hash:
+                    message += f"🔑 Hash: <code>{safe_git_hash}</code>\n"
                 message += f"❌ 状态: 构建失败\n\n"
                 if ops_usernames:
-                    mentions = " ".join([f"@{u}" for u in ops_usernames if u])
+                    mentions = " ".join([f"@{html.escape(str(u))}" for u in ops_usernames if u])
                     if mentions:
                         message += f"{mentions}\n"
                 message += "请让运维ops 协助查看错误日志"
             elif status == 'ABORTED':
-                message = "⚠️ **构建已终止**\n\n"
-                message += f"📦 服务: {service_display}\n"
-                if git_hash:
-                    message += f"🔑 Hash: `{git_hash}`\n"
+                message = "⚠️ <b>构建已终止</b>\n\n"
+                message += f"📦 服务: {safe_service_display}\n"
+                if safe_git_hash:
+                    message += f"🔑 Hash: <code>{safe_git_hash}</code>\n"
                 message += f"⚠️ 状态: 构建已被终止"
             elif status == 'UNSTABLE':
-                message = "⚠️ **构建不稳定**\n\n"
-                message += f"📦 服务: {service_display}\n"
-                if git_hash:
-                    message += f"🔑 Hash: `{git_hash}`\n"
+                message = "⚠️ <b>构建不稳定</b>\n\n"
+                message += f"📦 服务: {safe_service_display}\n"
+                if safe_git_hash:
+                    message += f"🔑 Hash: <code>{safe_git_hash}</code>\n"
                 message += f"⚠️ 状态: 构建不稳定（可能有测试失败）"
             else:
-                message = "❓ **构建状态未知**\n\n"
-                message += f"📦 服务: {service_display}\n"
-                if git_hash:
-                    message += f"🔑 Hash: `{git_hash}`\n"
-                message += f"❓ 状态: {status}"
+                safe_status = html.escape(str(status))
+                message = "❓ <b>构建状态未知</b>\n\n"
+                message += f"📦 服务: {safe_service_display}\n"
+                if safe_git_hash:
+                    message += f"🔑 Hash: <code>{safe_git_hash}</code>\n"
+                message += f"❓ 状态: {safe_status}"
             
             # 发送到工作流的原始群组
             await JenkinsNotifier._send_to_workflow_groups(context, workflow_data, message)
@@ -131,7 +136,7 @@ class JenkinsNotifier:
                                 await context.bot.send_message(
                                     chat_id=group_id,
                                     text=message,
-                                    parse_mode='Markdown'
+                                    parse_mode='HTML'
                                 )
                                 logger.info(f"Jenkins 通知已发送到群组 {group_id}")
                             except Exception as e:
@@ -144,7 +149,7 @@ class JenkinsNotifier:
                     await context.bot.send_message(
                         chat_id=group_id,
                         text=message,
-                        parse_mode='Markdown',
+                        parse_mode='HTML',
                         reply_to_message_id=original_message_id  # 回复到原始审批消息
                     )
                     logger.info(f"✅ Jenkins 通知已回复到群组 {group_id} 的原始消息 (消息ID: {original_message_id})")
