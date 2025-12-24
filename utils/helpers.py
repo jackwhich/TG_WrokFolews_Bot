@@ -19,7 +19,7 @@ def get_current_timestamp() -> str:
 
 def get_user_info(update: Update) -> Tuple[int, str]:
     """
-    从 Update 对象获取用户信息
+    从 Update 对象获取用户信息（增加防护）
     
     Args:
         update: Telegram Update 对象
@@ -27,9 +27,11 @@ def get_user_info(update: Update) -> Tuple[int, str]:
     Returns:
         (user_id, username) 元组
     """
-    user = update.effective_user
-    user_id = user.id
-    username = user.username or user.first_name or "未知用户"
+    user = getattr(update, "effective_user", None)
+    if not user:
+        return 0, "未知用户"
+    user_id = getattr(user, "id", 0) or 0
+    username = getattr(user, "username", None) or getattr(user, "first_name", None) or "未知用户"
     return user_id, username
 
 

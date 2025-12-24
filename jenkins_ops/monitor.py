@@ -311,15 +311,19 @@ class JenkinsMonitor:
             }
             
             if build_info:
-                # 更新构建信息
-                if not build_info.get('building', False) and build_info.get('status'):
-                    # 构建完成，记录结束时间和时长
+                # Jenkins 返回 'result' 表示最终结果，'building' 表示是否仍在构建
+                result = build_info.get('result')
+                is_building = build_info.get('building', False)
+                
+                # 如果构建已结束（非 building 且有 result），记录结束时间和时长
+                if not is_building and result:
                     build_end_time = int(time.time())
-                    duration_ms = build_info.get('duration', 0)
+                    duration_ms = build_info.get('duration', 0)  # 通常为毫秒
                     update_data['build_end_time'] = build_end_time
                     update_data['build_duration'] = duration_ms
+                    update_data['build_result'] = result
                 
-                # 更新 Job URL
+                # 更新 Job URL（如果有）
                 if build_info.get('url'):
                     update_data['job_url'] = build_info.get('url')
             
