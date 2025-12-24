@@ -84,7 +84,9 @@ def main():
     # 注意：数据库初始化需要通过 scripts/init_db.py 手动执行
     try:
         # 确保数据库连接可用（但不初始化表结构）
-        WorkflowManager._get_connection()
+        # 使用 with 语句确保连接正确关闭
+        with WorkflowManager._get_connection():
+            pass
         
         # 从数据库加载配置到 Settings
         Settings.load_from_db()

@@ -526,22 +526,22 @@ class WorkflowManager:
     @classmethod
     def set_message_template(cls, template_type: str, content: str, project: Optional[str] = None) -> bool:
         """写入/更新消息模板"""
-        with cls._get_connection() as conn:
-            cursor = conn.cursor()
         try:
-            timestamp = int(time.time())
-            cursor.execute(
-                """
-                INSERT INTO message_templates (template_type, project, content, updated_at)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(template_type, project) DO UPDATE SET
-                    content=excluded.content,
-                    updated_at=excluded.updated_at
-                """,
-                (template_type, project, content, timestamp),
-            )
-            conn.commit()
-            return True
+            with cls._get_connection() as conn:
+                cursor = conn.cursor()
+                timestamp = int(time.time())
+                cursor.execute(
+                    """
+                    INSERT INTO message_templates (template_type, project, content, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(template_type, project) DO UPDATE SET
+                        content=excluded.content,
+                        updated_at=excluded.updated_at
+                    """,
+                    (template_type, project, content, timestamp),
+                )
+                conn.commit()
+                return True
         except Exception as e:
             logger.error(f"更新消息模板失败: {str(e)}", exc_info=True)
             return False
@@ -554,34 +554,34 @@ class WorkflowManager:
         default: Optional[str] = None
     ) -> str:
         """获取消息模板，优先项目级，其次通用，最后回退默认值"""
-        with cls._get_connection() as conn:
-            cursor = conn.cursor()
-
         # 确保有缺省模板
         cls._ensure_default_templates()
 
-        # 项目级
-        if project:
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # 项目级
+            if project:
+                cursor.execute(
+                    """
+                    SELECT content FROM message_templates
+                    WHERE template_type = ? AND project = ?
+                    """,
+                    (template_type, project),
+                )
+                row = cursor.fetchone()
+                if row and row[0]:
+                    return row[0]
+
+            # 全局
             cursor.execute(
                 """
                 SELECT content FROM message_templates
-                WHERE template_type = ? AND project = ?
+                WHERE template_type = ? AND project IS NULL
                 """,
-                (template_type, project),
+                (template_type,),
             )
             row = cursor.fetchone()
-            if row and row[0]:
-                return row[0]
-
-        # 全局
-        cursor.execute(
-            """
-            SELECT content FROM message_templates
-            WHERE template_type = ? AND project IS NULL
-            """,
-            (template_type,),
-        )
-        row = cursor.fetchone()
         if row and row[0]:
             return row[0]
 
@@ -666,14 +666,14 @@ class WorkflowManager:
         """初始化应用配置表（仅创建表结构，配置值从 settings.py 的默认值初始化）"""
         with cls._get_connection() as conn:
             cursor = conn.cursor()
-        
-        # 检查数据库中是否已有配置
-        cursor.execute("SELECT COUNT(*) FROM app_config")
-        count = cursor.fetchone()[0]
-        
-        if count > 0:
-            logger.info("应用配置已存在于数据库中，跳过初始化")
-            return
+            
+            # 检查数据库中是否已有配置
+            cursor.execute("SELECT COUNT(*) FROM app_config")
+            count = cursor.fetchone()[0]
+            
+            if count > 0:
+                logger.info("应用配置已存在于数据库中，跳过初始化")
+                return
         
         # 表结构已在 _init_database() 中创建，这里只是标记表已初始化
         logger.info("✅ 应用配置表已初始化（配置值需要通过 scripts/init_db.py 脚本初始化）")
@@ -713,15 +713,14 @@ class WorkflowManager:
         """从数据库获取应用配置"""
         with cls._get_connection() as conn:
             cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT config_value FROM app_config 
-            WHERE config_key = ?
-        """, (key,))
-        
-        row = cursor.fetchone()
-        if row and row[0] is not None:
-            return row[0]
+            cursor.execute("""
+                SELECT config_value FROM app_config 
+                WHERE config_key = ?
+            """, (key,))
+            
+            row = cursor.fetchone()
+            if row and row[0] is not None:
+                return row[0]
         
         return default
     
@@ -730,32 +729,29 @@ class WorkflowManager:
         """从数据库获取所有应用配置"""
         with cls._get_connection() as conn:
             cursor = conn.cursor()
-        
-        cursor.execute("SELECT config_key, config_value FROM app_config")
-        rows = cursor.fetchall()
-        
-        config_dict = {}
-        for row in rows:
-            config_dict[row[0]] = row[1] if row[1] is not None else ""
-        
-        return config_dict
+            cursor.execute("SELECT config_key, config_value FROM app_config")
+            rows = cursor.fetchall()
+            
+            config_dict = {}
+            for row in rows:
+                config_dict[row[0]] = row[1] if row[1] is not None else ""
+            
+            return config_dict
     
     @classmethod
     def update_app_config(cls, key: str, value: str) -> bool:
         """更新应用配置"""
-        with cls._get_connection() as conn:
-            cursor = conn.cursor()
-        
         try:
-            timestamp = int(time.time())
-            cursor.execute("""
-                INSERT OR REPLACE INTO app_config (config_key, config_value, updated_at)
-                VALUES (?, ?, ?)
-            """, (key, value, timestamp))
-            conn.commit()
-            return True
+            with cls._get_connection() as conn:
+                cursor = conn.cursor()
+                timestamp = int(time.time())
+                cursor.execute("""
+                    INSERT OR REPLACE INTO app_config (config_key, config_value, updated_at)
+                    VALUES (?, ?, ?)
+                """, (key, value, timestamp))
+                conn.commit()
+                return True
         except Exception as e:
-            conn.rollback()
             logger.error(f"更新应用配置失败: {str(e)}", exc_info=True)
             return False
     
@@ -779,9 +775,6 @@ class WorkflowManager:
         Returns:
             创建的工作流数据字典
         """
-        with cls._get_connection() as conn:
-            cursor = conn.cursor()
-        
         # 生成工作流ID
         workflow_id = generate_workflow_id()
         timestamp = int(time.time())
@@ -789,17 +782,18 @@ class WorkflowManager:
         
         # 插入工作流（使用事务确保原子性）
         try:
-            cursor.execute("""
-                INSERT INTO workflows (
-                    workflow_id, timestamp, user_id, username, submission_data,
-                    status, created_at, project, template_type
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (workflow_id, timestamp, user_id, username, submission_data, STATUS_PENDING, created_at, project, template_type))
-            
-            conn.commit()
-            logger.info(f"✅ 工作流已创建 - ID: {workflow_id}, 用户: {username} ({user_id})")
+            with cls._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO workflows (
+                        workflow_id, timestamp, user_id, username, submission_data,
+                        status, created_at, project, template_type
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (workflow_id, timestamp, user_id, username, submission_data, STATUS_PENDING, created_at, project, template_type))
+                
+                conn.commit()
+                logger.info(f"✅ 工作流已创建 - ID: {workflow_id}, 用户: {username} ({user_id})")
         except Exception as e:
-            conn.rollback()
             logger.error(f"创建工作流失败: {str(e)}", exc_info=True)
             raise
         
@@ -823,15 +817,14 @@ class WorkflowManager:
         """获取工作流"""
         with cls._get_connection() as conn:
             cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT * FROM workflows 
-            WHERE workflow_id = ?
-        """, (workflow_id,))
-        
-        row = cursor.fetchone()
-        if row:
-            return cls._row_to_dict(row)
+            cursor.execute("""
+                SELECT * FROM workflows 
+                WHERE workflow_id = ?
+            """, (workflow_id,))
+            
+            row = cursor.fetchone()
+            if row:
+                return cls._row_to_dict(row)
         
         return None
     
@@ -840,16 +833,15 @@ class WorkflowManager:
         """根据消息ID获取工作流"""
         with cls._get_connection() as conn:
             cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT w.* FROM workflows w
-            INNER JOIN workflow_messages wm ON w.workflow_id = wm.workflow_id
-            WHERE wm.message_id = ?
-        """, (message_id,))
-        
-        row = cursor.fetchone()
-        if row:
-            return cls._row_to_dict(row)
+            cursor.execute("""
+                SELECT w.* FROM workflows w
+                INNER JOIN workflow_messages wm ON w.workflow_id = wm.workflow_id
+                WHERE wm.message_id = ?
+            """, (message_id,))
+            
+            row = cursor.fetchone()
+            if row:
+                return cls._row_to_dict(row)
         
         return None
     
@@ -865,9 +857,6 @@ class WorkflowManager:
         Returns:
             是否成功
         """
-        with cls._get_connection() as conn:
-            cursor = conn.cursor()
-        
         # 构建更新字段
         update_fields = []
         values = []
@@ -907,28 +896,27 @@ class WorkflowManager:
         """
         
         try:
-            cursor.execute(sql, values)
-            conn.commit()
-            logger.debug(f"工作流已更新 - ID: {workflow_id}, 更新字段: {list(kwargs.keys())}")
-            return True
+            with cls._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(sql, values)
+                conn.commit()
+                logger.debug(f"工作流已更新 - ID: {workflow_id}, 更新字段: {list(kwargs.keys())}")
+                return True
         except Exception as e:
-            conn.rollback()
             logger.error(f"更新工作流失败 - 工作流ID: {workflow_id}, 错误: {str(e)}", exc_info=True)
             return False
     
     @classmethod
     def delete_workflow(cls, workflow_id: str) -> bool:
         """删除工作流（级联删除关联的消息和 SSO 记录）"""
-        with cls._get_connection() as conn:
-            cursor = conn.cursor()
-        
         try:
-            cursor.execute("DELETE FROM workflows WHERE workflow_id = ?", (workflow_id,))
-            conn.commit()
-            logger.info(f"✅ 工作流已删除 - ID: {workflow_id}")
-            return True
+            with cls._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM workflows WHERE workflow_id = ?", (workflow_id,))
+                conn.commit()
+                logger.info(f"✅ 工作流已删除 - ID: {workflow_id}")
+                return True
         except Exception as e:
-            conn.rollback()
             logger.error(f"删除工作流失败 - 工作流ID: {workflow_id}, 错误: {str(e)}", exc_info=True)
             return False
     
@@ -952,9 +940,6 @@ class WorkflowManager:
         Returns:
             工作流字典
         """
-        with cls._get_connection() as conn:
-            cursor = conn.cursor()
-        
         # 构建查询条件
         conditions = []
         params = []
@@ -980,15 +965,17 @@ class WorkflowManager:
             sql += " LIMIT ? OFFSET ?"
             params.extend([limit, offset])
         
-        cursor.execute(sql, params)
-        rows = cursor.fetchall()
-        
-        workflows = {}
-        for row in rows:
-            data = cls._row_to_dict(row)
-            workflows[data['workflow_id']] = data
-        
-        return workflows
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(sql, params)
+            rows = cursor.fetchall()
+            
+            workflows = {}
+            for row in rows:
+                data = cls._row_to_dict(row)
+                workflows[data['workflow_id']] = data
+            
+            return workflows
     
     @classmethod
     def cleanup_old_data(cls) -> int:
@@ -1015,9 +1002,6 @@ class WorkflowManager:
         Returns:
             SSO 提交记录字典
         """
-        with cls._get_connection() as conn:
-            cursor = conn.cursor()
-        
         # 生成提交ID（使用 workflow_id 作为 submission_id）
         submission_id = workflow_id
         submit_time = int(time.time())
@@ -1025,36 +1009,38 @@ class WorkflowManager:
         updated_at = created_at
         
         try:
-            cursor.execute("""
-                INSERT INTO sso_submissions (
-                    submission_id, workflow_id, process_instance_id,
-                    sso_order_data, submit_status, submit_time,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                submission_id,
-                workflow_id,
-                process_instance_id,
-                json.dumps(sso_order_data, ensure_ascii=False),
-                'pending',
-                submit_time,
-                created_at,
-                updated_at
-            ))
-            
-            conn.commit()
-            logger.info(f"✅ SSO 提交记录已创建 - Submission ID: {submission_id}, 工作流ID: {workflow_id}")
-            
-            return {
-                'submission_id': submission_id,
-                'workflow_id': workflow_id,
-                'process_instance_id': process_instance_id,
-                'sso_order_data': sso_order_data,
-                'submit_status': 'pending',
-                'submit_time': submit_time,
-                'created_at': created_at,
-                'updated_at': updated_at
-            }
+            with cls._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO sso_submissions (
+                        submission_id, workflow_id, process_instance_id,
+                        sso_order_data, submit_status, submit_time,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    submission_id,
+                    workflow_id,
+                    process_instance_id,
+                    json.dumps(sso_order_data, ensure_ascii=False),
+                    'pending',
+                    submit_time,
+                    created_at,
+                    updated_at
+                ))
+                
+                conn.commit()
+                logger.info(f"✅ SSO 提交记录已创建 - Submission ID: {submission_id}, 工作流ID: {workflow_id}")
+                
+                return {
+                    'submission_id': submission_id,
+                    'workflow_id': workflow_id,
+                    'process_instance_id': process_instance_id,
+                    'sso_order_data': sso_order_data,
+                    'submit_status': 'pending',
+                    'submit_time': submit_time,
+                    'created_at': created_at,
+                    'updated_at': updated_at
+                }
         except Exception as e:
             logger.error(f"创建 SSO 提交记录失败: {e}", exc_info=True)
             raise
@@ -1072,29 +1058,28 @@ class WorkflowManager:
         """
         with cls._get_connection() as conn:
             cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT * FROM sso_submissions 
-            WHERE workflow_id = ?
-            ORDER BY submit_time DESC
-            LIMIT 1
-        """, (workflow_id,))
-        
-        row = cursor.fetchone()
-        if row:
-            data = dict(row)
-            # 解析 JSON 字段
-            if data.get('sso_order_data'):
-                try:
-                    data['sso_order_data'] = json.loads(data['sso_order_data'])
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            if data.get('submit_response'):
-                try:
-                    data['submit_response'] = json.loads(data['submit_response'])
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            return data
+            cursor.execute("""
+                SELECT * FROM sso_submissions 
+                WHERE workflow_id = ?
+                ORDER BY submit_time DESC
+                LIMIT 1
+            """, (workflow_id,))
+            
+            row = cursor.fetchone()
+            if row:
+                data = dict(row)
+                # 解析 JSON 字段
+                if data.get('sso_order_data'):
+                    try:
+                        data['sso_order_data'] = json.loads(data['sso_order_data'])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                if data.get('submit_response'):
+                    try:
+                        data['submit_response'] = json.loads(data['submit_response'])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                return data
         
         return None
     
@@ -1115,9 +1100,6 @@ class WorkflowManager:
             response: SSO 提交响应（可选）
             error: 错误信息（可选）
         """
-        with cls._get_connection() as conn:
-            cursor = conn.cursor()
-        
         updated_at = get_current_timestamp()
         update_fields = ["submit_status = ?", "updated_at = ?"]
         values = [status, updated_at]
@@ -1133,14 +1115,16 @@ class WorkflowManager:
         values.append(submission_id)
         
         try:
-            cursor.execute(f"""
-                UPDATE sso_submissions 
-                SET {', '.join(update_fields)}
-                WHERE submission_id = ?
-            """, values)
-            
-            conn.commit()
-            logger.info(f"✅ SSO 提交状态已更新 - Submission ID: {submission_id}, 状态: {status}")
+            with cls._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(f"""
+                    UPDATE sso_submissions 
+                    SET {', '.join(update_fields)}
+                    WHERE submission_id = ?
+                """, values)
+                
+                conn.commit()
+                logger.info(f"✅ SSO 提交状态已更新 - Submission ID: {submission_id}, 状态: {status}")
         except Exception as e:
             logger.error(f"更新 SSO 提交状态失败: {e}", exc_info=True)
             raise
@@ -1171,9 +1155,6 @@ class WorkflowManager:
         Returns:
             构建状态记录字典
         """
-        with cls._get_connection() as conn:
-            cursor = conn.cursor()
-        
         # 生成构建ID
         build_id = f"BUILD-{int(time.time())}-{str(uuid.uuid4())[:8].upper()}"
         build_start_time = int(time.time())
@@ -1181,42 +1162,44 @@ class WorkflowManager:
         updated_at = created_at
         
         try:
-            cursor.execute("""
-                INSERT INTO sso_build_status (
-                    build_id, submission_id, workflow_id, release_id,
-                    job_name, service_name, job_id, build_status,
-                    build_start_time, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                build_id,
-                submission_id,
-                workflow_id,
-                release_id,
-                job_name,
-                service_name,
-                job_id,
-                build_status,
-                build_start_time,
-                created_at,
-                updated_at
-            ))
-            
-            conn.commit()
-            logger.info(f"✅ 构建状态记录已创建 - Build ID: {build_id}, Release ID: {release_id}, Job: {job_name}")
-            
-            return {
-                'build_id': build_id,
-                'submission_id': submission_id,
-                'workflow_id': workflow_id,
-                'release_id': release_id,
-                'job_name': job_name,
-                'service_name': service_name,
-                'job_id': job_id,
-                'build_status': build_status,
-                'build_start_time': build_start_time,
-                'created_at': created_at,
-                'updated_at': updated_at
-            }
+            with cls._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO sso_build_status (
+                        build_id, submission_id, workflow_id, release_id,
+                        job_name, service_name, job_id, build_status,
+                        build_start_time, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    build_id,
+                    submission_id,
+                    workflow_id,
+                    release_id,
+                    job_name,
+                    service_name,
+                    job_id,
+                    build_status,
+                    build_start_time,
+                    created_at,
+                    updated_at
+                ))
+                
+                conn.commit()
+                logger.info(f"✅ 构建状态记录已创建 - Build ID: {build_id}, Release ID: {release_id}, Job: {job_name}")
+                
+                return {
+                    'build_id': build_id,
+                    'submission_id': submission_id,
+                    'workflow_id': workflow_id,
+                    'release_id': release_id,
+                    'job_name': job_name,
+                    'service_name': service_name,
+                    'job_id': job_id,
+                    'build_status': build_status,
+                    'build_start_time': build_start_time,
+                    'created_at': created_at,
+                    'updated_at': updated_at
+                }
         except Exception as e:
             logger.error(f"创建构建状态记录失败: {e}", exc_info=True)
             raise
@@ -1236,9 +1219,6 @@ class WorkflowManager:
             status: 构建状态 (BUILDING/SUCCESS/FAILURE/ABORTED)
             build_detail: 构建详情（可选）
         """
-        with cls._get_connection() as conn:
-            cursor = conn.cursor()
-        
         updated_at = get_current_timestamp()
         update_fields = ["build_status = ?", "updated_at = ?"]
         values = [status, updated_at]
@@ -1260,14 +1240,16 @@ class WorkflowManager:
         values.append(build_id)
         
         try:
-            cursor.execute(f"""
-                UPDATE sso_build_status 
-                SET {', '.join(update_fields)}
-                WHERE build_id = ?
-            """, values)
-            
-            conn.commit()
-            logger.debug(f"构建状态已更新 - Build ID: {build_id}, 状态: {status}")
+            with cls._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(f"""
+                    UPDATE sso_build_status 
+                    SET {', '.join(update_fields)}
+                    WHERE build_id = ?
+                """, values)
+                
+                conn.commit()
+                logger.debug(f"构建状态已更新 - Build ID: {build_id}, 状态: {status}")
         except Exception as e:
             logger.error(f"更新构建状态失败: {e}", exc_info=True)
             raise
@@ -1283,9 +1265,6 @@ class WorkflowManager:
         Returns:
             构建状态记录列表
         """
-        with cls._get_connection() as conn:
-            cursor = conn.cursor()
-        
         # 使用索引优化的查询（build_status, notified, build_end_time 复合索引）
         sql = """
             SELECT * FROM sso_build_status 
@@ -1294,26 +1273,28 @@ class WorkflowManager:
             ORDER BY build_end_time ASC
         """
         
-        if limit:
-            sql += " LIMIT ?"
-            cursor.execute(sql, (limit,))
-        else:
-            cursor.execute(sql)
-        
-        rows = cursor.fetchall()
-        results = []
-        
-        for row in rows:
-            data = dict(row)
-            # 解析 JSON 字段
-            if data.get('build_detail'):
-                try:
-                    data['build_detail'] = json.loads(data['build_detail'])
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            results.append(data)
-        
-        return results
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
+            if limit:
+                sql += " LIMIT ?"
+                cursor.execute(sql, (limit,))
+            else:
+                cursor.execute(sql)
+            
+            rows = cursor.fetchall()
+            results = []
+            
+            for row in rows:
+                data = dict(row)
+                # 解析 JSON 字段
+                if data.get('build_detail'):
+                    try:
+                        data['build_detail'] = json.loads(data['build_detail'])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                results.append(data)
+            
+            return results
     
     @classmethod
     def mark_build_notified(cls, build_id: str):
@@ -1323,21 +1304,20 @@ class WorkflowManager:
         Args:
             build_id: 构建ID
         """
-        with cls._get_connection() as conn:
-            cursor = conn.cursor()
-        
         notification_time = int(time.time())
         updated_at = get_current_timestamp()
         
         try:
-            cursor.execute("""
-                UPDATE sso_build_status 
-                SET notified = 1, notification_time = ?, updated_at = ?
-                WHERE build_id = ?
-            """, (notification_time, updated_at, build_id))
-            
-            conn.commit()
-            logger.debug(f"构建已标记为已通知 - Build ID: {build_id}")
+            with cls._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE sso_build_status 
+                    SET notified = 1, notification_time = ?, updated_at = ?
+                    WHERE build_id = ?
+                """, (notification_time, updated_at, build_id))
+                
+                conn.commit()
+                logger.debug(f"构建已标记为已通知 - Build ID: {build_id}")
         except Exception as e:
             logger.error(f"标记构建已通知失败: {e}", exc_info=True)
             raise
@@ -1368,9 +1348,6 @@ class WorkflowManager:
         Returns:
             Jenkins 构建记录字典
         """
-        with cls._get_connection() as conn:
-            cursor = conn.cursor()
-        
         # 生成构建ID
         build_id = f"JENKINS-{int(time.time())}-{str(uuid.uuid4())[:8].upper()}"
         build_start_time = int(time.time())
@@ -1378,40 +1355,42 @@ class WorkflowManager:
         updated_at = created_at
         
         try:
-            cursor.execute("""
-                INSERT INTO jenkins_builds (
-                    build_id, workflow_id, job_name, job_url, build_number,
-                    build_status, build_start_time, build_parameters,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                build_id,
-                workflow_id,
-                job_name,
-                job_url,
-                build_number,
-                build_status,
-                build_start_time,
-                json.dumps(build_parameters, ensure_ascii=False) if build_parameters else None,
-                created_at,
-                updated_at
-            ))
-            
-            conn.commit()
-            logger.info(f"✅ Jenkins 构建记录已创建 - Build ID: {build_id}, Job: {job_name}, Build: {build_number}")
-            
-            return {
-                'build_id': build_id,
-                'workflow_id': workflow_id,
-                'job_name': job_name,
-                'job_url': job_url,
-                'build_number': build_number,
-                'build_status': build_status,
-                'build_start_time': build_start_time,
-                'build_parameters': build_parameters,
-                'created_at': created_at,
-                'updated_at': updated_at
-            }
+            with cls._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO jenkins_builds (
+                        build_id, workflow_id, job_name, job_url, build_number,
+                        build_status, build_start_time, build_parameters,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    build_id,
+                    workflow_id,
+                    job_name,
+                    job_url,
+                    build_number,
+                    build_status,
+                    build_start_time,
+                    json.dumps(build_parameters, ensure_ascii=False) if build_parameters else None,
+                    created_at,
+                    updated_at
+                ))
+                
+                conn.commit()
+                logger.info(f"✅ Jenkins 构建记录已创建 - Build ID: {build_id}, Job: {job_name}, Build: {build_number}")
+                
+                return {
+                    'build_id': build_id,
+                    'workflow_id': workflow_id,
+                    'job_name': job_name,
+                    'job_url': job_url,
+                    'build_number': build_number,
+                    'build_status': build_status,
+                    'build_start_time': build_start_time,
+                    'build_parameters': build_parameters,
+                    'created_at': created_at,
+                    'updated_at': updated_at
+                }
         except Exception as e:
             logger.error(f"创建 Jenkins 构建记录失败: {e}", exc_info=True)
             raise
@@ -1428,9 +1407,6 @@ class WorkflowManager:
         Returns:
             是否成功
         """
-        with cls._get_connection() as conn:
-            cursor = conn.cursor()
-        
         updated_at = get_current_timestamp()
         update_fields = ["updated_at = ?"]
         values = [updated_at]
@@ -1443,7 +1419,7 @@ class WorkflowManager:
         allowed_fields = [
             'job_name', 'job_url', 'build_number', 'build_status',
             'build_start_time', 'build_end_time', 'build_duration',
-            'build_console_output', 'build_parameters'
+            'build_console_output', 'build_parameters', 'build_result'
         ]
         
         for field, value in kwargs.items():
@@ -1458,15 +1434,17 @@ class WorkflowManager:
         values.append(build_id)
         
         try:
-            cursor.execute(f"""
-                UPDATE jenkins_builds 
-                SET {', '.join(update_fields)}
-                WHERE build_id = ?
-            """, values)
-            
-            conn.commit()
-            logger.debug(f"Jenkins 构建记录已更新 - Build ID: {build_id}, 更新字段: {list(kwargs.keys())}")
-            return True
+            with cls._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(f"""
+                    UPDATE jenkins_builds 
+                    SET {', '.join(update_fields)}
+                    WHERE build_id = ?
+                """, values)
+                
+                conn.commit()
+                logger.debug(f"Jenkins 构建记录已更新 - Build ID: {build_id}, 更新字段: {list(kwargs.keys())}")
+                return True
         except Exception as e:
             logger.error(f"更新 Jenkins 构建记录失败 - Build ID: {build_id}, 错误: {str(e)}", exc_info=True)
             return False
@@ -1484,24 +1462,23 @@ class WorkflowManager:
         """
         with cls._get_connection() as conn:
             cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT * FROM jenkins_builds 
-            WHERE workflow_id = ?
-            ORDER BY created_at DESC
-            LIMIT 1
-        """, (workflow_id,))
-        
-        row = cursor.fetchone()
-        if row:
-            data = dict(row)
-            # 解析 JSON 字段
-            if data.get('build_parameters'):
-                try:
-                    data['build_parameters'] = json.loads(data['build_parameters'])
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            return data
+            cursor.execute("""
+                SELECT * FROM jenkins_builds 
+                WHERE workflow_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+            """, (workflow_id,))
+            
+            row = cursor.fetchone()
+            if row:
+                data = dict(row)
+                # 解析 JSON 字段
+                if data.get('build_parameters'):
+                    try:
+                        data['build_parameters'] = json.loads(data['build_parameters'])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                return data
         
         return None
     
@@ -1518,22 +1495,21 @@ class WorkflowManager:
         """
         with cls._get_connection() as conn:
             cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT * FROM jenkins_builds 
-            WHERE build_id = ?
-        """, (build_id,))
-        
-        row = cursor.fetchone()
-        if row:
-            data = dict(row)
-            # 解析 JSON 字段
-            if data.get('build_parameters'):
-                try:
-                    data['build_parameters'] = json.loads(data['build_parameters'])
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            return data
+            cursor.execute("""
+                SELECT * FROM jenkins_builds 
+                WHERE build_id = ?
+            """, (build_id,))
+            
+            row = cursor.fetchone()
+            if row:
+                data = dict(row)
+                # 解析 JSON 字段
+                if data.get('build_parameters'):
+                    try:
+                        data['build_parameters'] = json.loads(data['build_parameters'])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                return data
         
         return None
     
@@ -1552,23 +1528,22 @@ class WorkflowManager:
         """
         with cls._get_connection() as conn:
             cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT * FROM jenkins_builds 
-            WHERE workflow_id = ? AND job_name = ? AND build_number = ?
-            LIMIT 1
-        """, (workflow_id, job_name, build_number))
-        
-        row = cursor.fetchone()
-        if row:
-            data = dict(row)
-            # 解析 JSON 字段
-            if data.get('build_parameters'):
-                try:
-                    data['build_parameters'] = json.loads(data['build_parameters'])
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            return data
+            cursor.execute("""
+                SELECT * FROM jenkins_builds 
+                WHERE workflow_id = ? AND job_name = ? AND build_number = ?
+                LIMIT 1
+            """, (workflow_id, job_name, build_number))
+            
+            row = cursor.fetchone()
+            if row:
+                data = dict(row)
+                # 解析 JSON 字段
+                if data.get('build_parameters'):
+                    try:
+                        data['build_parameters'] = json.loads(data['build_parameters'])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                return data
         
         return None
     
@@ -1583,9 +1558,6 @@ class WorkflowManager:
         Returns:
             Jenkins 构建记录列表
         """
-        with cls._get_connection() as conn:
-            cursor = conn.cursor()
-        
         # 使用索引优化的查询（build_status, notified, build_end_time 复合索引）
         sql = """
             SELECT * FROM jenkins_builds 
@@ -1594,26 +1566,28 @@ class WorkflowManager:
             ORDER BY build_end_time ASC
         """
         
-        if limit:
-            sql += " LIMIT ?"
-            cursor.execute(sql, (limit,))
-        else:
-            cursor.execute(sql)
-        
-        rows = cursor.fetchall()
-        results = []
-        
-        for row in rows:
-            data = dict(row)
-            # 解析 JSON 字段
-            if data.get('build_parameters'):
-                try:
-                    data['build_parameters'] = json.loads(data['build_parameters'])
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            results.append(data)
-        
-        return results
+        with cls._get_connection() as conn:
+            cursor = conn.cursor()
+            if limit:
+                sql += " LIMIT ?"
+                cursor.execute(sql, (limit,))
+            else:
+                cursor.execute(sql)
+            
+            rows = cursor.fetchall()
+            results = []
+            
+            for row in rows:
+                data = dict(row)
+                # 解析 JSON 字段
+                if data.get('build_parameters'):
+                    try:
+                        data['build_parameters'] = json.loads(data['build_parameters'])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                results.append(data)
+            
+            return results
     
     @classmethod
     def mark_jenkins_build_notified(cls, build_id: str) -> bool:
@@ -1626,22 +1600,21 @@ class WorkflowManager:
         Returns:
             是否成功
         """
-        with cls._get_connection() as conn:
-            cursor = conn.cursor()
-        
         notification_time = int(time.time())
         updated_at = get_current_timestamp()
         
         try:
-            cursor.execute("""
-                UPDATE jenkins_builds 
-                SET notified = 1, notification_time = ?, updated_at = ?
-                WHERE build_id = ?
-            """, (notification_time, updated_at, build_id))
-            
-            conn.commit()
-            logger.debug(f"Jenkins 构建已标记为已通知 - Build ID: {build_id}")
-            return True
+            with cls._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE jenkins_builds 
+                    SET notified = 1, notification_time = ?, updated_at = ?
+                    WHERE build_id = ?
+                """, (notification_time, updated_at, build_id))
+                
+                conn.commit()
+                logger.debug(f"Jenkins 构建已标记为已通知 - Build ID: {build_id}")
+                return True
         except Exception as e:
             logger.error(f"标记 Jenkins 构建已通知失败: {e}", exc_info=True)
             return False
